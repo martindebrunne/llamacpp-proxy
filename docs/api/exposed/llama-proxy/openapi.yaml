@@ -1,0 +1,208 @@
+openapi: 3.0.3
+info:
+  title: Llama Proxy API
+  description: OpenAI-compatible proxy to local llama.cpp server
+  version: 1.0.0
+servers:
+  - url: http://127.0.0.1:4000
+    description: Local proxy server
+
+paths:
+  /chat/completions:
+    post:
+      summary: Chat completions (alias)
+      operationId: postChatCompletions
+      tags:
+        - completions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+      responses:
+        '200':
+          description: Streaming response
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '500':
+          description: Proxy error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/chat/completions:
+    post:
+      summary: Chat completions
+      operationId: postV1ChatCompletions
+      tags:
+        - completions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+      responses:
+        '200':
+          description: Streaming response
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '500':
+          description: Proxy error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /completions:
+    post:
+      summary: Completions (alias)
+      operationId: postCompletions
+      tags:
+        - completions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompletionRequest'
+      responses:
+        '200':
+          description: Streaming response
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '500':
+          description: Proxy error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/completions:
+    post:
+      summary: Completions
+      operationId: postV1Completions
+      tags:
+        - completions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompletionRequest'
+      responses:
+        '200':
+          description: Streaming response
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '500':
+          description: Proxy error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /models:
+    get:
+      summary: List models (alias)
+      operationId: getModels
+      tags:
+        - models
+      responses:
+        '200':
+          description: Model list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelList'
+
+  /v1/models:
+    get:
+      summary: List models
+      operationId: getV1Models
+      tags:
+        - models
+      responses:
+        '200':
+          description: Model list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelList'
+
+components:
+  schemas:
+    ChatCompletionRequest:
+      type: object
+      properties:
+        model:
+          type: string
+          description: Model name (e.g., Qwen3.5-35B-A3B-T-Think)
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        chat_template_kwargs:
+          type: object
+          description: Additional template parameters
+
+    CompletionRequest:
+      type: object
+      properties:
+        model:
+          type: string
+        prompt:
+          type: string
+
+    Message:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+            - user
+            - assistant
+            - system
+        content:
+          type: string
+
+    ModelList:
+      type: object
+      properties:
+        object:
+          type: string
+          example: list
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Model'
+
+    Model:
+      type: object
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          example: model
+        owned_by:
+          type: string
+          example: local
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
