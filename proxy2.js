@@ -80,42 +80,24 @@ function mapRequest(body = {}) {
   return body;
 }
 
-/**
- * Collect response body for logging / post-processing
- */
-async function collectResponse(upstream) {
-  if (!upstream.body) return null;
-
-  const chunks = [];
-  const reader = upstream.body.getReader();
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-    }
-  } finally {
-    reader.cancel();
-  }
-
-  const buffer = Buffer.concat(chunks);
-  const text = buffer.toString("utf-8");
-
-  try {
-    const json = JSON.parse(text);
-    return { text, json };
-  } catch {
-    return { text, json: null };
-  }
-}
-
 function isNonEmptyString(value) {
   return typeof value === "string" && value.length > 0;
 }
 
 function isNonEmptyArray(value) {
   return Array.isArray(value) && value.length > 0;
+}
+
+function isNonEmptyObject(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0;
+}
+
+function hasUsableContent(value) {
+  return (
+    isNonEmptyString(value) ||
+    isNonEmptyArray(value) ||
+    isNonEmptyObject(value)
+  );
 }
 
 function stripReasoningFields(obj) {
@@ -151,8 +133,6 @@ function pickBestRecoveredOutput(reasoningText) {
     return xmlBlocks[xmlBlocks.length - 1];
   }
 
-  // Fallback prudence: si le reasoning ressemble à une sortie XML incomplète,
-  // on préfère ne rien reconstruire plutôt que d'envoyer un faux bloc.
   const looksLikeBrokenXml =
     trimmed.includes("<") || trimmed.includes("</") || trimmed.includes("/>");
 
@@ -160,8 +140,61 @@ function pickBestRecoveredOutput(reasoningText) {
     return null;
   }
 
-  // En dernier recours, on peut récupérer du texte simple non vide.
   return trimmed;
+}
+
+function recoverMessageFromReasoning(message) {
+  if (!message || typeof message !== "object") return message;
+
+  const cleanMessage = { ...message };
+
+  const hasContent = hasUsableContent(cleanMessage.content);
+  const hasToolCalls = isNonEmptyArray(cleanMessage.tool_calls);
+
+  if (!hasContent && !hasToolCalls) {
+    const recovered = pickBestRecoveredOutput(
+      cleanMessage.reasoning_content ?? cleanMessage.reasoning
+    );
+
+    if (isNonEmptyString(recovered)) {
+      cleanMessage.content = recovered;
+    }
+  }
+
+  stripReasoningFields(cleanMessage);
+  return cleanMessage;
+}
+
+function recoverDeltaFromReasoning(delta) {
+  if (!delta || typeof delta !== "object") return null;
+
+  const cleanDelta = { ...delta };
+
+  const hasRole = cleanDelta.role === "assistant";
+  const hasContent = hasUsableContent(cleanDelta.content);
+  const hasToolCalls = isNonEmptyArray(cleanDelta.tool_calls);
+
+  if (!hasContent && !hasToolCalls && !hasRole) {
+    const recovered = pickBestRecoveredOutput(
+      cleanDelta.reasoning_content ?? cleanDelta.reasoning
+    );
+
+    if (isNonEmptyString(recovered)) {
+      cleanDelta.content = recovered;
+    }
+  }
+
+  stripReasoningFields(cleanDelta);
+
+  const finalHasContent = hasUsableContent(cleanDelta.content);
+  const finalHasToolCalls = isNonEmptyArray(cleanDelta.tool_calls);
+  const finalHasRole = cleanDelta.role === "assistant";
+
+  if (!finalHasContent && !finalHasToolCalls && !finalHasRole) {
+    return null;
+  }
+
+  return cleanDelta;
 }
 
 function sanitizeJsonChoice(choice) {
@@ -170,16 +203,20 @@ function sanitizeJsonChoice(choice) {
   const cleanChoice = { ...choice };
 
   if (cleanChoice.delta) {
-    const cleanDelta = { ...cleanChoice.delta };
-    stripReasoningFields(cleanDelta);
-    cleanChoice.delta = cleanDelta;
+    const recoveredDelta = recoverDeltaFromReasoning(cleanChoice.delta);
+    if (!recoveredDelta) return null;
+    cleanChoice.delta = recoveredDelta;
     return cleanChoice;
   }
 
   if (cleanChoice.message) {
-    const cleanMessage = { ...cleanChoice.message };
-    stripReasoningFields(cleanMessage);
-    cleanChoice.message = cleanMessage;
+    const recoveredMessage = recoverMessageFromReasoning(cleanChoice.message);
+    const hasContent = hasUsableContent(recoveredMessage?.content);
+    const hasToolCalls = isNonEmptyArray(recoveredMessage?.tool_calls);
+
+    if (!hasContent && !hasToolCalls) return null;
+
+    cleanChoice.message = recoveredMessage;
     return cleanChoice;
   }
 
@@ -189,8 +226,6 @@ function sanitizeJsonChoice(choice) {
 function sanitizeJsonText(text) {
   try {
     const parsed = JSON.parse(text);
-
-    // Preserve usage metadata
     const usage = parsed?.usage;
 
     if (Array.isArray(parsed?.choices)) {
@@ -198,10 +233,9 @@ function sanitizeJsonText(text) {
     }
 
     if (parsed?.message && typeof parsed.message === "object") {
-      parsed.message = stripReasoningFields({ ...parsed.message });
+      parsed.message = recoverMessageFromReasoning(parsed.message);
     }
 
-    // Restore usage metadata
     if (usage) {
       parsed.usage = usage;
     }
@@ -212,219 +246,252 @@ function sanitizeJsonText(text) {
   }
 }
 
-function parseSseLines(text) {
-  const lines = text.split(/\r?\n/);
-  const events = [];
+function parseSseEventBlock(block) {
+  const lines = block.split(/\r?\n/);
+  const dataLines = [];
 
   for (const line of lines) {
-    if (!line.startsWith("data: ")) continue;
-
-    const payload = line.slice(6);
-
-    if (payload === "[DONE]") {
-      events.push({ type: "done" });
-      continue;
-    }
-
-    try {
-      events.push({ type: "json", data: JSON.parse(payload) });
-    } catch {
-      events.push({ type: "raw", data: payload });
+    if (line.startsWith("data: ")) {
+      dataLines.push(line.slice(6));
     }
   }
 
-  return events;
+  if (dataLines.length === 0) return null;
+
+  const payload = dataLines.join("\n");
+
+  if (payload === "[DONE]") {
+    return { type: "done" };
+  }
+
+  try {
+    return { type: "json", data: JSON.parse(payload) };
+  } catch {
+    return { type: "raw", data: payload };
+  }
 }
 
-function buildCleanSseFromEvents(events) {
-  let assistantRoleSent = false;
-  const outputLines = [];
+function serializeSseEvent(json) {
+  return `data: ${JSON.stringify(json)}\n\n`;
+}
 
-  let accumulatedContent = "";
+function createSseChunkFromTemplate(baseChunk, choice, delta) {
+  return {
+    id: baseChunk?.id ?? "proxy-stream",
+    object: baseChunk?.object ?? "chat.completion.chunk",
+    created: baseChunk?.created ?? Math.floor(Date.now() / 1000),
+    model: baseChunk?.model ?? REAL_MODEL,
+    choices: [
+      {
+        index: choice?.index ?? 0,
+        delta,
+        finish_reason: null,
+      },
+    ],
+  };
+}
+
+function splitSseBlocks(buffer) {
+  const normalized = buffer.replace(/\r\n/g, "\n");
+  const parts = normalized.split("\n\n");
+  const complete = parts.slice(0, -1);
+  const remainder = parts[parts.length - 1] ?? "";
+  return { complete, remainder };
+}
+
+async function collectResponse(upstream) {
+  if (!upstream.body) return null;
+
+  const chunks = [];
+  const reader = upstream.body.getReader();
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+  } finally {
+    reader.cancel();
+  }
+
+  const buffer = Buffer.concat(chunks);
+  const text = buffer.toString("utf-8");
+
+  try {
+    const json = JSON.parse(text);
+    return { text, json };
+  } catch {
+    return { text, json: null };
+  }
+}
+
+async function forwardStreamingResponse(req, res, upstream, mapped, upstreamPath, startTime) {
+  const reader = upstream.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let rawResponseText = "";
+  let sseBuffer = "";
+
+  let assistantRoleSent = false;
   let accumulatedReasoning = "";
   let sawUsefulContent = false;
   let sawToolCalls = false;
   let sawDone = false;
-  let lastUsage = null; // Preserve usage metadata from upstream
+  let lastUsage = null;
 
-  for (const event of events) {
-    if (event.type === "done") {
-      sawDone = true;
-      continue;
-    }
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    if (event.type !== "json") {
-      continue;
-    }
+      const chunkText = decoder.decode(value, { stream: true });
+      rawResponseText += chunkText;
+      sseBuffer += chunkText;
 
-    const chunk = event.data;
-    if (!chunk || !Array.isArray(chunk.choices) || chunk.choices.length === 0) {
-      // Preserve usage even if no choices
-      if (chunk?.usage) {
-        lastUsage = chunk.usage;
+      const { complete, remainder } = splitSseBlocks(sseBuffer);
+      sseBuffer = remainder;
+
+      for (const block of complete) {
+        if (!block.trim()) continue;
+
+        const event = parseSseEventBlock(block);
+        if (!event) continue;
+
+        if (event.type === "done") {
+          sawDone = true;
+          continue;
+        }
+
+        if (event.type !== "json") {
+          continue;
+        }
+
+        const chunk = event.data;
+
+        if (!chunk || !Array.isArray(chunk.choices) || chunk.choices.length === 0) {
+          if (chunk?.usage) {
+            lastUsage = chunk.usage;
+          }
+          continue;
+        }
+
+        if (chunk?.usage) {
+          lastUsage = chunk.usage;
+        }
+
+        for (const choice of chunk.choices) {
+          const delta = choice?.delta;
+          const message = choice?.message;
+
+          if (delta && typeof delta === "object") {
+            if (delta.role === "assistant" && !assistantRoleSent) {
+              res.write(
+                serializeSseEvent(
+                  createSseChunkFromTemplate(chunk, choice, { role: "assistant" })
+                )
+              );
+              assistantRoleSent = true;
+            }
+
+            if (hasUsableContent(delta.content)) {
+              res.write(
+                serializeSseEvent(
+                  createSseChunkFromTemplate(chunk, choice, { content: delta.content })
+                )
+              );
+              sawUsefulContent = true;
+            }
+
+            if (isNonEmptyArray(delta.tool_calls)) {
+              res.write(
+                serializeSseEvent(
+                  createSseChunkFromTemplate(chunk, choice, { tool_calls: delta.tool_calls })
+                )
+              );
+              sawToolCalls = true;
+            }
+
+            if (isNonEmptyString(delta.reasoning_content)) {
+              accumulatedReasoning += delta.reasoning_content;
+            } else if (isNonEmptyString(delta.reasoning)) {
+              accumulatedReasoning += delta.reasoning;
+            }
+          } else if (message && typeof message === "object") {
+            if (!assistantRoleSent) {
+              res.write(
+                serializeSseEvent(
+                  createSseChunkFromTemplate(chunk, choice, { role: "assistant" })
+                )
+              );
+              assistantRoleSent = true;
+            }
+
+            if (hasUsableContent(message.content)) {
+              res.write(
+                serializeSseEvent(
+                  createSseChunkFromTemplate(chunk, choice, { content: message.content })
+                )
+              );
+              sawUsefulContent = true;
+            }
+
+            if (isNonEmptyArray(message.tool_calls)) {
+              res.write(
+                serializeSseEvent(
+                  createSseChunkFromTemplate(chunk, choice, { tool_calls: message.tool_calls })
+                )
+              );
+              sawToolCalls = true;
+            }
+
+            if (isNonEmptyString(message.reasoning_content)) {
+              accumulatedReasoning += message.reasoning_content;
+            } else if (isNonEmptyString(message.reasoning)) {
+              accumulatedReasoning += message.reasoning;
+            }
+          }
+        }
       }
-      continue;
     }
 
-    // Preserve usage metadata
-    if (chunk?.usage) {
-      lastUsage = chunk.usage;
+    const trailing = decoder.decode();
+    if (trailing) {
+      rawResponseText += trailing;
+      sseBuffer += trailing;
     }
 
-    for (const choice of chunk.choices) {
-      const delta = choice?.delta;
-      const message = choice?.message;
+    if (sseBuffer.trim()) {
+      const event = parseSseEventBlock(sseBuffer);
+      if (event?.type === "done") {
+        sawDone = true;
+      } else if (event?.type === "json" && event.data?.usage) {
+        lastUsage = event.data.usage;
+      }
+    }
 
-      if (delta && typeof delta === "object") {
-        if (delta.role === "assistant" && !assistantRoleSent) {
-          const roleChunk = {
-            ...chunk,
-            choices: [
-              {
-                ...choice,
-                delta: { role: "assistant" },
-              },
-            ],
-          };
-          outputLines.push(`data: ${JSON.stringify(roleChunk)}`);
-          assistantRoleSent = true;
-        }
+    if (!sawUsefulContent && !sawToolCalls) {
+      const recovered = pickBestRecoveredOutput(accumulatedReasoning);
 
-        if (isNonEmptyString(delta.content)) {
-          const contentChunk = {
-            ...chunk,
-            choices: [
-              {
-                ...choice,
-                delta: { content: delta.content },
-              },
-            ],
-          };
-          outputLines.push(`data: ${JSON.stringify(contentChunk)}`);
-          accumulatedContent += delta.content;
-          sawUsefulContent = true;
-        } else if (isNonEmptyArray(delta.content)) {
-          const contentChunk = {
-            ...chunk,
-            choices: [
-              {
-                ...choice,
-                delta: { content: delta.content },
-              },
-            ],
-          };
-          outputLines.push(`data: ${JSON.stringify(contentChunk)}`);
-          sawUsefulContent = true;
-        }
-
-        if (isNonEmptyArray(delta.tool_calls)) {
-          const toolChunk = {
-            ...chunk,
-            choices: [
-              {
-                ...choice,
-                delta: { tool_calls: delta.tool_calls },
-              },
-            ],
-          };
-          outputLines.push(`data: ${JSON.stringify(toolChunk)}`);
-          sawToolCalls = true;
-        }
-
-        if (isNonEmptyString(delta.reasoning_content)) {
-          accumulatedReasoning += delta.reasoning_content;
-        } else if (isNonEmptyString(delta.reasoning)) {
-          accumulatedReasoning += delta.reasoning;
-        }
-      } else if (message && typeof message === "object") {
+      if (isNonEmptyString(recovered)) {
         if (!assistantRoleSent) {
-          const roleChunk = {
-            id: chunk.id,
-            object: "chat.completion.chunk",
-            created: chunk.created,
-            model: chunk.model,
-            choices: [
-              {
-                index: choice.index ?? 0,
-                delta: { role: "assistant" },
-                finish_reason: null,
-              },
-            ],
-          };
-          outputLines.push(`data: ${JSON.stringify(roleChunk)}`);
-          assistantRoleSent = true;
+          res.write(
+            serializeSseEvent({
+              id: "proxy-recovered-role",
+              object: "chat.completion.chunk",
+              created: Math.floor(Date.now() / 1000),
+              model: REAL_MODEL,
+              choices: [
+                {
+                  index: 0,
+                  delta: { role: "assistant" },
+                  finish_reason: null,
+                },
+              ],
+            })
+          );
         }
 
-        if (isNonEmptyString(message.content)) {
-          const contentChunk = {
-            id: chunk.id,
-            object: "chat.completion.chunk",
-            created: chunk.created,
-            model: chunk.model,
-            choices: [
-              {
-                index: choice.index ?? 0,
-                delta: { content: message.content },
-                finish_reason: null,
-              },
-            ],
-          };
-          outputLines.push(`data: ${JSON.stringify(contentChunk)}`);
-          accumulatedContent += message.content;
-          sawUsefulContent = true;
-        }
-
-        if (isNonEmptyArray(message.tool_calls)) {
-          const toolChunk = {
-            id: chunk.id,
-            object: "chat.completion.chunk",
-            created: chunk.created,
-            model: chunk.model,
-            choices: [
-              {
-                index: choice.index ?? 0,
-                delta: { tool_calls: message.tool_calls },
-                finish_reason: null,
-              },
-            ],
-          };
-          outputLines.push(`data: ${JSON.stringify(toolChunk)}`);
-          sawToolCalls = true;
-        }
-
-        if (isNonEmptyString(message.reasoning_content)) {
-          accumulatedReasoning += message.reasoning_content;
-        } else if (isNonEmptyString(message.reasoning)) {
-          accumulatedReasoning += message.reasoning;
-        }
-      }
-    }
-  }
-
-  if (!sawUsefulContent && !sawToolCalls) {
-    const recovered = pickBestRecoveredOutput(accumulatedReasoning);
-
-    if (isNonEmptyString(recovered)) {
-      if (!assistantRoleSent) {
-        outputLines.push(
-          `data: ${JSON.stringify({
-            id: "proxy-recovered-role",
-            object: "chat.completion.chunk",
-            created: Math.floor(Date.now() / 1000),
-            model: REAL_MODEL,
-            choices: [
-              {
-                index: 0,
-                delta: { role: "assistant" },
-                finish_reason: null,
-              },
-            ],
-          })}`
-        );
-      }
-
-      outputLines.push(
-        `data: ${JSON.stringify({
+        const recoveredChunk = {
           id: "proxy-recovered-content",
           object: "chat.completion.chunk",
           created: Math.floor(Date.now() / 1000),
@@ -436,33 +503,71 @@ function buildCleanSseFromEvents(events) {
               finish_reason: null,
             },
           ],
-        })}`
-      );
-    }
-  }
+        };
 
-  // Add usage metadata in the last chunk if available
-  if (sawDone && lastUsage) {
-    // Find the last data line and add usage to it
-    for (let i = outputLines.length - 1; i >= 0; i--) {
-      if (outputLines[i].startsWith("data: ")) {
-        try {
-          const chunkData = JSON.parse(outputLines[i].slice(6));
-          chunkData.usage = lastUsage;
-          outputLines[i] = `data: ${JSON.stringify(chunkData)}`;
-        } catch {
-          // Not JSON, skip
+        if (lastUsage) {
+          recoveredChunk.usage = lastUsage;
         }
-        break;
+
+        res.write(serializeSseEvent(recoveredChunk));
       }
     }
-  }
 
-  if (sawDone) {
-    outputLines.push("data: [DONE]");
-  }
+    if (lastUsage && (sawUsefulContent || sawToolCalls)) {
+      res.write(
+        serializeSseEvent({
+          id: "proxy-usage",
+          object: "chat.completion.chunk",
+          created: Math.floor(Date.now() / 1000),
+          model: REAL_MODEL,
+          choices: [
+            {
+              index: 0,
+              delta: {},
+              finish_reason: null,
+            },
+          ],
+          usage: lastUsage,
+        })
+      );
+    }
 
-  return outputLines.join("\n\n") + (outputLines.length ? "\n\n" : "");
+    if (sawDone) {
+      res.write("data: [DONE]\n\n");
+    } else {
+      res.write("data: [DONE]\n\n");
+    }
+
+    res.end();
+
+    const duration = Date.now() - startTime;
+    let responseForLog = { text: rawResponseText, json: null };
+    try {
+      responseForLog.json = JSON.parse(rawResponseText);
+    } catch {}
+
+    await logRequest(req, upstreamPath, startTime, mapped, upstream.status, duration, responseForLog);
+  } catch (e) {
+    const duration = Date.now() - startTime;
+    error("Streaming request failed", `${req.originalUrl} | ${String(e)}`);
+
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: "proxy_error",
+        message: String(e),
+      });
+    } else {
+      try {
+        res.end();
+      } catch {}
+    }
+
+    await logRequest(req, upstreamPath, startTime, mapped, 500, duration, { text: rawResponseText, json: null });
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {}
+  }
 }
 
 function sanitizeResponseText(contentType, text, incomingModel) {
@@ -472,11 +577,6 @@ function sanitizeResponseText(contentType, text, incomingModel) {
   }
 
   const normalizedType = (contentType || "").toLowerCase();
-
-  if (normalizedType.includes("text/event-stream")) {
-    const events = parseSseLines(text);
-    return buildCleanSseFromEvents(events);
-  }
 
   if (normalizedType.includes("application/json")) {
     return sanitizeJsonText(text);
@@ -530,16 +630,21 @@ async function forwardJsonPost(req, res, upstreamPath) {
       body: JSON.stringify(mapped),
     });
 
-    const status = upstream.status;
-    const duration = Date.now() - startTime;
-
     const contentType = upstream.headers.get("content-type");
     if (contentType) res.setHeader("Content-Type", contentType);
 
     if (!upstream.body) {
       res.end();
-      await logRequest(req, upstreamPath, startTime, mapped, status, duration, response);
+      const duration = Date.now() - startTime;
+      await logRequest(req, upstreamPath, startTime, mapped, upstream.status, duration, response);
       return;
+    }
+
+    const isNoThink = req.body?.model?.includes("No-Think");
+    const isEventStream = (contentType || "").toLowerCase().includes("text/event-stream");
+
+    if (isEventStream && !isNoThink) {
+      return await forwardStreamingResponse(req, res, upstream, mapped, upstreamPath, startTime);
     }
 
     response = await collectResponse(upstream);
@@ -550,7 +655,9 @@ async function forwardJsonPost(req, res, upstreamPath) {
     }
 
     res.end();
-    await logRequest(req, upstreamPath, startTime, mapped, status, duration, response);
+
+    const duration = Date.now() - startTime;
+    await logRequest(req, upstreamPath, startTime, mapped, upstream.status, duration, response);
   } catch (e) {
     const duration = Date.now() - startTime;
     error("Request failed", `${req.originalUrl} | ${String(e)}`);

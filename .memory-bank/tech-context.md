@@ -38,14 +38,17 @@ node proxy2.js 4000:8080
 
 ## Version Comparison
 
-| Feature | proxy.js | proxy2.js |
-|---------|----------|-----------|
+| Feature | proxy.js | proxy2.js (v1.0.9) |
+|---------|----------|-------------------|
 | Model transformation | ✅ | ✅ |
-| Streaming | ✅ | ✅ |
+| Streaming | ✅ | ✅ (real-time) |
 | Reasoning filtering | ❌ | ✅ |
 | Content recovery | ❌ | ✅ |
 | No-Think passthrough | ❌ | ✅ |
 | Usage metadata preservation | ❌ | ✅ |
+| Real-time chunk processing | ❌ | ✅ |
+| Separate usage chunk | ❌ | ✅ |
+| Comprehensive error handling | ❌ | ✅ |
 
 ## Usage Recommendations
 
@@ -72,3 +75,21 @@ node proxy2.js 4000:8080
 | `/v1/completions` | POST | ✅ |
 | `/v1/models` | GET | ❌ (passthrough) |
 | `/ws` | WS | ❌ (passthrough) |
+
+## Streaming Architecture
+
+### Before (v1.0.8)
+```
+Collect all chunks → Buffer response → Process → Write to client
+```
+
+### After (v1.0.9)
+```
+Read chunk → Parse → Write immediately → Next chunk
+```
+
+### Benefits
+- Lower memory usage
+- Faster first byte
+- Better for long responses
+- Cleaner separation of usage metadata

@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.9] - 2026-08-08
+
+### Changed
+- Refactored streaming response handling: `forwardStreamingResponse()` writes chunks in real-time
+- Added `isNonEmptyObject()` and `hasUsableContent()` helper functions
+- Added `recoverMessageFromReasoning()` and `recoverDeltaFromReasoning()` functions
+- Added `parseSseEventBlock()`, `serializeSseEvent()`, `createSseChunkFromTemplate()`, `splitSseBlocks()` utilities
+- Usage metadata now written in separate chunk after content
+- Added comprehensive error handling with try/catch/finally
+- Removed `buildCleanSseFromEvents()` in favor of real-time streaming
+
+### Fixed
+- Streaming responses now processed more efficiently
+- Usage metadata appears in dedicated chunk for easier client parsing
+
+---
+
 ## [1.0.8] - 2026-08-08
 
 ### Fixed

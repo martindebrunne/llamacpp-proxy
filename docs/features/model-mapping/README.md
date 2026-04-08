@@ -9,6 +9,7 @@ Transform logical model names (`*-Think`, `*-No-Think`) into upstream-compatible
 - Inject `enable_thinking` flag via `chat_template_kwargs`
 - Conditional response sanitization (Think mode only)
 - Preserve usage metadata (token consumption)
+- Real-time streaming with separate usage chunk
 
 ## Entry Points
 - `mapRequest()` function in `proxy2.js`
@@ -30,12 +31,13 @@ Transform logical model names (`*-Think`, `*-No-Think`) into upstream-compatible
   }
 }
 
-// Response sanitization
+// Response processing (real-time streaming)
+- Process chunks in real-time via forwardStreamingResponse()
 - Filter reasoning_content fields
 - Filter reasoning fields
-- Reconstruct clean SSE/JSON
 - Recover content from reasoning if empty
-- Preserve usage metadata (prompt_tokens, completion_tokens, total_tokens)
+- Write usage metadata in separate chunk
+- Write [DONE] marker
 ```
 
 ### No-Think Mode (`*-No-Think`)
@@ -49,11 +51,24 @@ Transform logical model names (`*-Think`, `*-No-Think`) into upstream-compatible
   "model": "Qwen3.5-35B-A3B-T-No-Think"  // Unchanged
 }
 
-// Response sanitization
-- No transformation (passthrough)
+// Response processing (passthrough)
+- No transformation
 - Original response preserved
-- Usage metadata preserved (prompt_tokens, completion_tokens, total_tokens)
+- Usage metadata preserved
 ```
+
+## Helper Functions
+
+| Function | Purpose |
+|----------|---------|
+| `isNonEmptyObject()` | Check if value is a non-empty object |
+| `hasUsableContent()` | Check if value has usable content (string, array, object) |
+| `recoverMessageFromReasoning()` | Recover content from reasoning field |
+| `recoverDeltaFromReasoning()` | Recover content from reasoning field in delta |
+| `parseSseEventBlock()` | Parse SSE event block |
+| `serializeSseEvent()` | Serialize JSON to SSE format |
+| `createSseChunkFromTemplate()` | Create SSE chunk from template |
+| `splitSseBlocks()` | Split SSE buffer into complete blocks |
 
 ## Related Documentation
 - [API Overview](../../api/exposed/llama-proxy/overview.md)

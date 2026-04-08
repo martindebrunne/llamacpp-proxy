@@ -1,7 +1,7 @@
 # Active Context: Llama Proxy
 
 ## Current Work Focus
-Preserve usage metadata (token consumption) in SSE and JSON responses.
+Refactor streaming response handling for real-time chunk processing and improved usage metadata handling.
 
 ## Recent Changes
 | Date | Change |
@@ -19,26 +19,35 @@ Preserve usage metadata (token consumption) in SSE and JSON responses.
 | 2026-08-08 | Preserve usage metadata from upstream chunks in SSE responses |
 | 2026-08-08 | Add usage to last chunk before [DONE] in SSE responses |
 | 2026-08-08 | Preserve usage in sanitizeJsonText() for JSON responses |
+| 2026-08-08 | Refactored streaming: forwardStreamingResponse() writes chunks in real-time |
+| 2026-08-08 | Added isNonEmptyObject() and hasUsableContent() helper functions |
+| 2026-08-08 | Added recoverMessageFromReasoning() and recoverDeltaFromReasoning() |
+| 2026-08-08 | Added parseSseEventBlock(), serializeSseEvent(), createSseChunkFromTemplate(), splitSseBlocks() |
+| 2026-08-08 | Usage metadata now written in separate chunk after content |
+| 2026-08-08 | Added comprehensive error handling with try/catch/finally |
 
 ## Next Steps
-- Monitor token consumption data in client applications
-- Consider adding usage metrics to logs
+- Monitor streaming performance improvements
+- Verify usage metadata appears correctly in client applications
 
 ## Important Patterns
-- Model name transformation via `chat_template_kwargs`
-- Streaming response passthrough via `ReadableStream`
-- Selective route interception for OpenAI-compatible endpoints
-- **Async logging with queue-based batching**
-- **Log rotation (time and size-based)**
-- **Console logging with compressed format**
-- **File logging with complete request/response payloads (no truncation)**
-- **Thinking mode indicator (✓/✗)**
-- **Status indicator (✓200/✗500)**
-- **Command line port configuration (proxyPort:upstreamPort)**
-- **Port configuration priority: CLI > ENV > defaults**
-- **Conditional response sanitization (Think mode only)**
-- **No-Think mode passthrough (no transformation)**
-- **Usage metadata preservation in SSE and JSON responses**
+- **Model name transformation** via `chat_template_kwargs`
+- **Streaming response passthrough** via `ReadableStream`
+- **Selective route interception** for OpenAI-compatible endpoints
+- **Async logging** with queue-based batching
+- **Log rotation** (time and size-based)
+- **Console logging** with compressed format
+- **File logging** with complete request/response payloads (no truncation)
+- **Thinking mode indicator** (✓/✗)
+- **Status indicator** (✓200/✗500)
+- **Command line port configuration** (proxyPort:upstreamPort)
+- **Port configuration priority**: CLI > ENV > defaults
+- **Conditional response sanitization** (Think mode only)
+- **No-Think mode passthrough** (no transformation)
+- **Usage metadata preservation** in SSE and JSON responses
+- **Real-time streaming** with direct `res.write()` calls
+- **Separate usage chunk** for cleaner client parsing
+- **Comprehensive error handling** with proper cleanup
 
 ## Learnings
 - Single-file Express apps are simple to deploy
@@ -57,3 +66,6 @@ Preserve usage metadata (token consumption) in SSE and JSON responses.
 - **No-Think mode in proxy2.js is now pure passthrough**
 - **Reasoning field filtering only applies to Think mode**
 - **Usage metadata must be explicitly preserved during sanitization**
+- **Real-time streaming is more efficient than buffering entire response**
+- **Separate usage chunk makes it easier for clients to parse**
+- **Error handling must release reader lock in finally block**

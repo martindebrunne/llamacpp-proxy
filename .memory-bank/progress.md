@@ -15,6 +15,9 @@
 - ✅ File logging with complete payloads
 - ✅ Usage metadata preservation in SSE responses
 - ✅ Usage metadata preservation in JSON responses
+- ✅ Real-time streaming with direct res.write() calls
+- ✅ Separate usage chunk for cleaner client parsing
+- ✅ Comprehensive error handling with try/catch/finally
 
 ### proxy2.js Features
 - ✅ Conditional response sanitization (Think mode only)
@@ -25,6 +28,10 @@
 - ✅ Content recovery from reasoning
 - ✅ No-Think mode passthrough (no transformation)
 - ✅ Usage metadata preservation (prompt_tokens, completion_tokens, total_tokens)
+- ✅ Real-time chunk processing
+- ✅ Helper functions: isNonEmptyObject, hasUsableContent
+- ✅ Recovery functions: recoverMessageFromReasoning, recoverDeltaFromReasoning
+- ✅ SSE utilities: parseSseEventBlock, serializeSseEvent, createSseChunkFromTemplate, splitSseBlocks
 
 ## What's Left to Build
 
@@ -37,10 +44,10 @@
 
 ## Current Status
 
-**Version 1.0.8** - Usage metadata preservation
+**Version 1.0.9** - Real-time streaming with separate usage chunk
 
 - proxy.js: Base implementation (stable)
-- proxy2.js: Enhanced with Think/No-Think differentiation and usage preservation (stable)
+- proxy2.js: Enhanced with Think/No-Think differentiation, usage preservation, and real-time streaming (stable)
 
 ## Known Issues
 
@@ -56,3 +63,5 @@ None currently.
 | 2026-08-08 | proxy2.js with sanitization | Better answers with Think mode |
 | 2026-08-08 | No-Think passthrough | User preference for no transformation |
 | 2026-08-08 | Usage metadata preservation | Required for token billing/monitoring |
+| 2026-08-08 | Real-time streaming | More efficient than buffering |
+| 2026-08-08 | Separate usage chunk | Easier for clients to parse |
