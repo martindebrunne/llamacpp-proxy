@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.8] - 2026-08-08
+
+### Fixed
+- Preserve usage metadata in SSE responses (buildCleanSseFromEvents)
+- Preserve usage metadata in JSON responses (sanitizeJsonText)
+- Token consumption data now correctly forwarded to clients
+
+---
+
 ## [1.0.7] - 2026-08-08
 
 ### Added
@@ -9,8 +18,8 @@ All notable changes to this project will be documented in this file.
 - Reasoning field filtering (reasoning_content, reasoning)
 - XML block extraction from reasoning text
 - SSE parsing and reconstruction
-- JSON sanitization for choices and messages
-- Content recovery from reasoning when content is empty
+- JSON sanitization for choices/messages
+- Content recovery from reasoning
 - No-Think mode passthrough (no transformation)
 
 ### Changed

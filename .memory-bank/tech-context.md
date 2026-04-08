@@ -1,84 +1,74 @@
 # Tech Context: Llama Proxy
 
-## Technologies Used
+## Technologies
 
-| Technology | Purpose | Version |
+| Technology | Version | Purpose |
 |------------|---------|---------|
-| Node.js | Runtime | Latest |
-| Express.js | Web framework | ^4.18.2 |
-| http-proxy-middleware | Proxy routing | ^2.0.6 |
+| Node.js | >=18 | Runtime |
+| Express | ^4.18.2 | Web server |
+| http-proxy-middleware | ^2.0.6 | WebSocket passthrough |
 
-## Dependencies
-
-```json
-{
-  "dependencies": {
-    "express": "^4.18.2",
-    "http-proxy-middleware": "^2.0.6"
-  }
-}
+## Entry Point
+```bash
+npm start
+# or
+node proxy2.js 4000:8080
 ```
+
+## Configuration
+
+| Source | Priority | Format |
+|--------|----------|--------|
+| CLI arguments | 1 | `proxyPort:upstreamPort` |
+| Environment variables | 2 | `PROXY_PORT`, `UPSTREAM_PORT` |
+| Defaults | 3 | `4000:8080` |
 
 ## Development Setup
 
-### Prerequisites
-- Node.js installed
-- llama-server running on `http://127.0.0.1:8080`
-
-### Starting the Proxy
 ```bash
-# Base version
-node proxy.js
+# Install dependencies
+npm install
 
-# Enhanced version with conditional sanitization
-node proxy2.js
+# Run proxy
+npm start
+
+# Run with custom ports
+node proxy2.js 4000:8080
 ```
-
-### Command Line Configuration
-```bash
-# Format: node proxy.js "PROXY_PORT:UPSTREAM_PORT"
-node proxy2.js "4000:8080"
-```
-
-### Client Configuration
-```javascript
-{
-  baseURL: "http://127.0.0.1:4000",
-  apiKey: "any-value", // not validated
-  model: "Qwen3.5-35B-A3B-T-Think" // or *-No-Think
-}
-```
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| PROXY_HOST | 127.0.0.1 | Proxy bind address |
-| PROXY_PORT | 4000 | Proxy server port |
-| UPSTREAM_HOST | 127.0.0.1 | llama-server host |
-| UPSTREAM_PORT | 8080 | llama-server port |
-
-## Technical Constraints
-- Local network only (127.0.0.1)
-- No authentication
-- 5MB JSON body limit on intercepted routes
-- 300s timeout for proxy connections
 
 ## Version Comparison
 
 | Feature | proxy.js | proxy2.js |
 |---------|----------|-----------|
-| Model mapping | ✅ | ✅ |
-| Request logging | ✅ | ✅ |
-| Response sanitization | ❌ | ✅ (Think mode only) |
-| Reasoning filtering | ❌ | ✅ (Think mode only) |
+| Model transformation | ✅ | ✅ |
+| Streaming | ✅ | ✅ |
+| Reasoning filtering | ❌ | ✅ |
+| Content recovery | ❌ | ✅ |
 | No-Think passthrough | ❌ | ✅ |
-| Content recovery | ❌ | ✅ (Think mode only) |
+| Usage metadata preservation | ❌ | ✅ |
 
 ## Usage Recommendations
 
-| Use Case | Recommended Version | Model |
-|----------|--------------------|-------|
-| Complex tasks, best answers | proxy2.js | *-Think |
-| Simple tasks, no transformation | proxy2.js | *-No-Think |
-| Minimal overhead | proxy.js | Any |
+| Use Case | Model | Version |
+|----------|-------|---------|
+| Complex tasks, best answers | `*-Think` | proxy2.js |
+| Simple tasks, no transformation | `*-No-Think` | proxy2.js |
+| Minimal overhead | Any | proxy.js |
+
+## Logging
+
+- **Console**: Compressed format with thinking mode indicator
+- **File**: Full request/response payloads (no truncation)
+- **Async**: Queue-based batching to prevent blocking
+- **Rotation**: Time and size-based
+
+## API Endpoints
+
+| Route | Method | Interception |
+|-------|--------|--------------|
+| `/chat/completions` | POST | ✅ |
+| `/v1/chat/completions` | POST | ✅ |
+| `/completions` | POST | ✅ |
+| `/v1/completions` | POST | ✅ |
+| `/v1/models` | GET | ❌ (passthrough) |
+| `/ws` | WS | ❌ (passthrough) |

@@ -4,5 +4,3 @@ node_modules/
 .env
 .env.local
 .DS_Store
-!logs/no_think_proxy-2026-04-08.log
-!logs/think_proxy-2026-04-08.log

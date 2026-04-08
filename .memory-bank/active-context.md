@@ -1,7 +1,7 @@
 # Active Context: Llama Proxy
 
 ## Current Work Focus
-Enhanced proxy2.js with conditional response sanitization and No-Think passthrough mode.
+Preserve usage metadata (token consumption) in SSE and JSON responses.
 
 ## Recent Changes
 | Date | Change |
@@ -15,11 +15,14 @@ Enhanced proxy2.js with conditional response sanitization and No-Think passthrou
 | 2026-08-08 | Modified mapRequest() to return body unchanged in No-Think mode |
 | 2026-08-08 | Modified sanitizeResponseText() to skip sanitization in No-Think mode |
 | 2026-08-08 | Updated forwardJsonPost() to pass incomingModel to sanitizeResponseText() |
+| 2026-08-08 | Added lastUsage variable to buildCleanSseFromEvents() |
+| 2026-08-08 | Preserve usage metadata from upstream chunks in SSE responses |
+| 2026-08-08 | Add usage to last chunk before [DONE] in SSE responses |
+| 2026-08-08 | Preserve usage in sanitizeJsonText() for JSON responses |
 
 ## Next Steps
-- Monitor proxy2.js performance with Think/No-Think modes
-- Consider adding configuration for sanitization toggle
-- Document No-Think passthrough behavior
+- Monitor token consumption data in client applications
+- Consider adding usage metrics to logs
 
 ## Important Patterns
 - Model name transformation via `chat_template_kwargs`
@@ -35,6 +38,7 @@ Enhanced proxy2.js with conditional response sanitization and No-Think passthrou
 - **Port configuration priority: CLI > ENV > defaults**
 - **Conditional response sanitization (Think mode only)**
 - **No-Think mode passthrough (no transformation)**
+- **Usage metadata preservation in SSE and JSON responses**
 
 ## Learnings
 - Single-file Express apps are simple to deploy
@@ -52,3 +56,4 @@ Enhanced proxy2.js with conditional response sanitization and No-Think passthrou
 - **proxy2.js provides better answers with Think mode enabled**
 - **No-Think mode in proxy2.js is now pure passthrough**
 - **Reasoning field filtering only applies to Think mode**
+- **Usage metadata must be explicitly preserved during sanitization**

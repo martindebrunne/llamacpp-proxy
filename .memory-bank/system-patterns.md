@@ -1,7 +1,7 @@
 # System Patterns: Llama Proxy
 
 ## Architecture Pattern
-**Single-file Proxy Server** - Express.js application with selective route interception, conditional response sanitization, and passthrough proxying.
+**Single-file Proxy Server** - Express.js application with selective route interception, conditional response sanitization, usage metadata preservation, and passthrough proxying.
 
 ## Component Diagram
 ```
@@ -17,6 +17,7 @@
         │                              │  forwardJsonPost()           │
         │                              │  → streaming response        │
         │  SSE stream ◄────────────────┤◄─────────────────────────────┤
+        │  (with usage metadata)       │                              │
         │                              │                              │
         │  Other routes (WS, etc.)     │  passthrough                 │
         │─────────────────────────────►│─────────────────────────────►│
@@ -51,7 +52,28 @@ if (contentType.includes("text/event-stream")) {
 }
 ```
 
-### 4. Streaming Passthrough Pattern
+### 4. Usage Metadata Preservation Pattern
+Usage metadata (`prompt_tokens`, `completion_tokens`, `total_tokens`) is preserved:
+
+```javascript
+// SSE responses
+let lastUsage = null;
+for (const event of events) {
+  if (event.data?.usage) {
+    lastUsage = event.data.usage;
+  }
+}
+// Add usage to last chunk before [DONE]
+
+// JSON responses
+const usage = parsed?.usage;
+// ... sanitize choices ...
+if (usage) {
+  parsed.usage = usage;  // Restore
+}
+```
+
+### 5. Streaming Passthrough Pattern
 Response streaming is handled via `ReadableStream`:
 ```javascript
 const reader = upstream.body.getReader();
@@ -62,7 +84,7 @@ while (true) {
 }
 ```
 
-### 5. Header Passthrough Pattern
+### 6. Header Passthrough Pattern
 Authorization headers are forwarded unchanged:
 ```javascript
 ...(req.headers.authorization ? { Authorization: req.headers.authorization } : {})
@@ -79,6 +101,7 @@ Authorization headers are forwarded unchanged:
 | 5min timeout | Long-running completions |
 | Conditional sanitization | No-Think mode is pure passthrough |
 | Think mode filtering | Hide reasoning fields from client |
+| Usage metadata preservation | Required for token billing/monitoring |
 
 ## Response Flow Comparison
 
@@ -92,9 +115,9 @@ upstream response
     ↓
 sanitizeResponseText() → Filter reasoning fields
     ↓
-buildCleanSseFromEvents() → Reconstruct clean SSE
+buildCleanSseFromEvents() → Reconstruct clean SSE + add usage
     ↓
-Stream sanitized response to client
+Stream sanitized response with usage to client
 ```
 
 ### No-Think Mode Flow
@@ -107,4 +130,4 @@ upstream response
     ↓
 sanitizeResponseText() → Return text unchanged
     ↓
-Stream original response to client
+Stream original response with usage to client

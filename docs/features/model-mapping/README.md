@@ -8,6 +8,7 @@ Transform logical model names (`*-Think`, `*-No-Think`) into upstream-compatible
 - Map to real upstream model (`Qwen3.5-35B-A3B-T`)
 - Inject `enable_thinking` flag via `chat_template_kwargs`
 - Conditional response sanitization (Think mode only)
+- Preserve usage metadata (token consumption)
 
 ## Entry Points
 - `mapRequest()` function in `proxy2.js`
@@ -34,6 +35,7 @@ Transform logical model names (`*-Think`, `*-No-Think`) into upstream-compatible
 - Filter reasoning fields
 - Reconstruct clean SSE/JSON
 - Recover content from reasoning if empty
+- Preserve usage metadata (prompt_tokens, completion_tokens, total_tokens)
 ```
 
 ### No-Think Mode (`*-No-Think`)
@@ -50,6 +52,7 @@ Transform logical model names (`*-Think`, `*-No-Think`) into upstream-compatible
 // Response sanitization
 - No transformation (passthrough)
 - Original response preserved
+- Usage metadata preserved (prompt_tokens, completion_tokens, total_tokens)
 ```
 
 ## Related Documentation

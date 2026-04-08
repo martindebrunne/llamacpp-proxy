@@ -13,6 +13,8 @@
 - ✅ Log rotation (time and size-based)
 - ✅ Console logging with compressed format
 - ✅ File logging with complete payloads
+- ✅ Usage metadata preservation in SSE responses
+- ✅ Usage metadata preservation in JSON responses
 
 ### proxy2.js Features
 - ✅ Conditional response sanitization (Think mode only)
@@ -22,6 +24,7 @@
 - ✅ JSON sanitization for choices/messages
 - ✅ Content recovery from reasoning
 - ✅ No-Think mode passthrough (no transformation)
+- ✅ Usage metadata preservation (prompt_tokens, completion_tokens, total_tokens)
 
 ## What's Left to Build
 
@@ -34,10 +37,10 @@
 
 ## Current Status
 
-**Version 1.0.7** - Enhanced with conditional sanitization
+**Version 1.0.8** - Usage metadata preservation
 
 - proxy.js: Base implementation (stable)
-- proxy2.js: Enhanced with Think/No-Think differentiation (stable)
+- proxy2.js: Enhanced with Think/No-Think differentiation and usage preservation (stable)
 
 ## Known Issues
 
@@ -52,3 +55,4 @@ None currently.
 | 2026-07-04 | No truncation | Complete debugging data |
 | 2026-08-08 | proxy2.js with sanitization | Better answers with Think mode |
 | 2026-08-08 | No-Think passthrough | User preference for no transformation |
+| 2026-08-08 | Usage metadata preservation | Required for token billing/monitoring |
