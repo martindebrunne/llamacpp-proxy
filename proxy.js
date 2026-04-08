@@ -1,12 +1,53 @@
 import express from "express";
 import { createProxyMiddleware } from "http-proxy-middleware";
+import { requestLog, requestLogConsole, info, error, flushLogs } from "./lib/logger.js";
 
 const app = express();
 
-const PROXY_HOST = "127.0.0.1";
-const PROXY_PORT = 4000;
+// Graceful shutdown handler
+process.on("SIGTERM", async () => {
+  info("Received SIGTERM, flushing logs and shutting down");
+  await flushLogs();
+  process.exit(0);
+});
 
-const LLAMA_ORIGIN = "http://127.0.0.1:8080";
+process.on("SIGINT", async () => {
+  info("Received SIGINT, flushing logs and shutting down");
+  await flushLogs();
+  process.exit(0);
+});
+
+/**
+ * Parse port configuration from command line or environment
+ * Supports formats: "3000", "3000:4000", "PROXY_PORT:UPSTREAM_PORT"
+ */
+function parsePortConfig() {
+  const arg = process.argv[2];
+  
+  // Check command line argument (e.g., "3000:4000")
+  if (arg && arg.includes(":")) {
+    const [proxyPort, upstreamPort] = arg.split(":").map(Number);
+    if (!isNaN(proxyPort) && !isNaN(upstreamPort)) {
+      return {
+        PROXY_PORT: proxyPort,
+        UPSTREAM_PORT: upstreamPort,
+      };
+    }
+  }
+  
+  // Check environment variables
+  const proxyPort = process.env.PROXY_PORT ? Number(process.env.PROXY_PORT) : 4000;
+  const upstreamPort = process.env.UPSTREAM_PORT ? Number(process.env.UPSTREAM_PORT) : 8080;
+  
+  return {
+    PROXY_PORT: isNaN(proxyPort) ? 4000 : proxyPort,
+    UPSTREAM_PORT: isNaN(upstreamPort) ? 8080 : upstreamPort,
+  };
+}
+
+const { PROXY_PORT, UPSTREAM_PORT } = parsePortConfig();
+const PROXY_HOST = process.env.PROXY_HOST || "127.0.0.1";
+const LLAMA_ORIGIN = `http://${process.env.UPSTREAM_HOST || "127.0.0.1"}:${UPSTREAM_PORT}`;
 
 // vrai modèle upstream llama.cpp
 const REAL_MODEL = "Qwen3.5-35B-A3B-T";
@@ -40,13 +81,72 @@ function mapRequest(body = {}) {
   };
 }
 
+/**
+ * Collect response body for logging
+ */
+async function collectResponse(upstream) {
+  if (!upstream.body) return null;
+  
+  const chunks = [];
+  const reader = upstream.body.getReader();
+  
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+  } finally {
+    reader.cancel();
+  }
+  
+  const buffer = Buffer.concat(chunks);
+  const text = buffer.toString('utf-8');
+  
+  // Try to parse as JSON for structured logging
+  try {
+    const json = JSON.parse(text);
+    return { text, json };
+  } catch {
+    return { text, json: null };
+  }
+}
+
+/**
+ * Log request with timing and payloads
+ */
+async function logRequest(req, upstreamPath, startTime, mapped, status, duration, response) {
+  // Log to file
+  await requestLog({
+    method: req.method,
+    path: req.originalUrl,
+    incomingModel: req.body?.model,
+    upstreamModel: mapped?.model,
+    thinking: mapped?.chat_template_kwargs?.enable_thinking,
+    status,
+    duration,
+    requestPayload: req.body,
+    responsePayload: response?.json || response?.text,
+  });
+  
+  // Log to console (compressed format)
+  requestLogConsole({
+    method: req.method,
+    path: req.originalUrl,
+    incomingModel: req.body?.model,
+    upstreamModel: mapped?.model,
+    thinking: mapped?.chat_template_kwargs?.enable_thinking,
+    status,
+    duration,
+  });
+}
+
 async function forwardJsonPost(req, res, upstreamPath) {
+  const startTime = Date.now();
+  let response = null;
+
   try {
     const mapped = mapRequest(req.body);
-
-    console.log(
-      `[POST] ${req.originalUrl} -> ${upstreamPath} | incoming=${req.body?.model} | upstream=${mapped.model} | thinking=${mapped.chat_template_kwargs?.enable_thinking}`
-    );
 
     const upstream = await fetch(`${LLAMA_ORIGIN}${upstreamPath}`, {
       method: "POST",
@@ -59,37 +159,37 @@ async function forwardJsonPost(req, res, upstreamPath) {
       body: JSON.stringify(mapped),
     });
 
-    res.status(upstream.status);
+    const status = upstream.status;
+    const duration = Date.now() - startTime;
 
     const contentType = upstream.headers.get("content-type");
     if (contentType) res.setHeader("Content-Type", contentType);
 
     if (!upstream.body) {
       res.end();
+      await logRequest(req, upstreamPath, startTime, mapped, status, duration, response);
       return;
     }
 
-    const reader = upstream.body.getReader();
-
-    res.on("close", () => {
-      try {
-        reader.cancel();
-      } catch {}
-    });
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      res.write(Buffer.from(value));
+    // Collect response first (stream can only be read once)
+    response = await collectResponse(upstream);
+    
+    // Stream collected response to client
+    if (response && response.text) {
+      const chunks = Buffer.from(response.text);
+      res.write(chunks);
     }
 
     res.end();
+    await logRequest(req, upstreamPath, startTime, mapped, status, duration, response);
   } catch (e) {
-    console.error(`[ERROR] ${req.originalUrl}`, e);
+    const duration = Date.now() - startTime;
+    error(`Request failed`, `${req.originalUrl} | ${String(e)}`);
     res.status(500).json({
       error: "proxy_error",
       message: String(e),
     });
+    await logRequest(req, upstreamPath, startTime, null, 500, duration, response);
   }
 }
 
@@ -126,7 +226,7 @@ app.use(
 );
 
 app.listen(PROXY_PORT, PROXY_HOST, () => {
-  console.log(`Proxy listening on http://${PROXY_HOST}:${PROXY_PORT}`);
-  console.log(`Passthrough target: ${LLAMA_ORIGIN}`);
-  console.log(`Base upstream model: ${REAL_MODEL}`);
+  info("Proxy started", `listening on http://${PROXY_HOST}:${PROXY_PORT}`);
+  info("Passthrough target", LLAMA_ORIGIN);
+  info("Base upstream model", REAL_MODEL);
 });
