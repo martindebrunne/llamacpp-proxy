@@ -720,6 +720,29 @@ app.get(["/models", "/v1/models"], async (_req, res) => {
   }
 });
 
+// Middleware de logging pour les requêtes passthrough
+app.use((req, res, next) => {
+  const startTime = Date.now();
+  
+  // Hook pour logger après la réponse
+  const originalEnd = res.end.bind(res);
+  res.end = function(...args) {
+    const duration = Date.now() - startTime;
+    requestLogConsole({
+      method: req.method,
+      path: req.originalUrl || req.url,
+      incomingModel: req.body?.model,
+      upstreamModel: "-",
+      thinking: "-",
+      status: res.statusCode,
+      duration,
+    });
+    originalEnd(...args);
+  };
+  
+  next();
+});
+
 // tout le reste = passthrough brut vers llama-server
 app.use(
   createProxyMiddleware({
