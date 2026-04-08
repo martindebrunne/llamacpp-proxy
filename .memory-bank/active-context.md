@@ -1,7 +1,7 @@
 # Active Context: Llama Proxy
 
 ## Current Work Focus
-Update /v1/models route to return upstream models with Think/No-Think variants, and document llama.cpp compatibility requirements.
+Add logging for all passthrough requests to ensure complete request tracking.
 
 ## Recent Changes
 | Date | Change |
@@ -27,10 +27,11 @@ Update /v1/models route to return upstream models with Think/No-Think variants, 
 | 2026-08-08 | Added comprehensive error handling with try/catch/finally |
 | 2026-08-08 | Updated /v1/models route to fetch upstream models and add Think/No-Think variants |
 | 2026-08-08 | Added llama.cpp compatibility warning to documentation |
+| 2026-08-08 | Added logging middleware for passthrough requests |
 
 ## Next Steps
-- Test /v1/models endpoint with upstream llama.cpp server
-- Verify Think/No-Think variants are correctly generated for all upstream models
+- Test logging for passthrough requests
+- Verify all request types are logged correctly
 
 ## Important Patterns
 - **Model name transformation** via `chat_template_kwargs`
@@ -52,6 +53,7 @@ Update /v1/models route to return upstream models with Think/No-Think variants, 
 - **Comprehensive error handling** with proper cleanup
 - **Dynamic model listing** from upstream with Think/No-Think variants
 - **llama.cpp compatibility requirement** for thinking mode
+- **Complete logging** for all request types (intercepted and passthrough)
 
 ## Learnings
 - Single-file Express apps are simple to deploy
@@ -75,3 +77,4 @@ Update /v1/models route to return upstream models with Think/No-Think variants, 
 - **Error handling must release reader lock in finally block**
 - **/v1/models must fetch upstream and add variants dynamically**
 - **llama.cpp model MUST support enable_thinking for thinking mode to work**
+- **All requests must be logged, including passthrough routes**

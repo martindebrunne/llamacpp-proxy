@@ -20,6 +20,7 @@
 - ✅ Comprehensive error handling with try/catch/finally
 - ✅ Passthrough for non-Think/No-Think models
 - ✅ Dynamic model listing from upstream with Think/No-Think variants
+- ✅ Complete logging for all request types (intercepted and passthrough)
 
 ### proxy2.js Features
 - ✅ Conditional response sanitization (Think mode only)
@@ -46,10 +47,10 @@
 
 ## Current Status
 
-**Version 1.0.10** - Dynamic model listing with Think/No-Think variants
+**Version 1.0.11** - Complete logging for all request types
 
 - proxy.js: Base implementation (stable)
-- proxy2.js: Enhanced with Think/No-Think differentiation, usage preservation, real-time streaming, and dynamic model listing (stable)
+- proxy2.js: Enhanced with Think/No-Think differentiation, usage preservation, real-time streaming, dynamic model listing, and complete logging (stable)
 
 ## Known Issues
 
@@ -70,3 +71,4 @@ None currently.
 | 2026-08-08 | Passthrough for unknown models | Flexibility for other models |
 | 2026-08-08 | Dynamic model listing | Reflect upstream models accurately |
 | 2026-08-08 | llama.cpp compatibility warning | Prevent user confusion |
+| 2026-08-08 | Complete logging for all requests | Full request tracking |
