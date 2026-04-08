@@ -190,12 +190,20 @@ function sanitizeJsonText(text) {
   try {
     const parsed = JSON.parse(text);
 
+    // Preserve usage metadata
+    const usage = parsed?.usage;
+
     if (Array.isArray(parsed?.choices)) {
       parsed.choices = parsed.choices.map(sanitizeJsonChoice).filter(Boolean);
     }
 
     if (parsed?.message && typeof parsed.message === "object") {
       parsed.message = stripReasoningFields({ ...parsed.message });
+    }
+
+    // Restore usage metadata
+    if (usage) {
+      parsed.usage = usage;
     }
 
     return JSON.stringify(parsed);
@@ -237,6 +245,7 @@ function buildCleanSseFromEvents(events) {
   let sawUsefulContent = false;
   let sawToolCalls = false;
   let sawDone = false;
+  let lastUsage = null; // Preserve usage metadata from upstream
 
   for (const event of events) {
     if (event.type === "done") {
@@ -250,7 +259,16 @@ function buildCleanSseFromEvents(events) {
 
     const chunk = event.data;
     if (!chunk || !Array.isArray(chunk.choices) || chunk.choices.length === 0) {
+      // Preserve usage even if no choices
+      if (chunk?.usage) {
+        lastUsage = chunk.usage;
+      }
       continue;
+    }
+
+    // Preserve usage metadata
+    if (chunk?.usage) {
+      lastUsage = chunk.usage;
     }
 
     for (const choice of chunk.choices) {
@@ -420,6 +438,23 @@ function buildCleanSseFromEvents(events) {
           ],
         })}`
       );
+    }
+  }
+
+  // Add usage metadata in the last chunk if available
+  if (sawDone && lastUsage) {
+    // Find the last data line and add usage to it
+    for (let i = outputLines.length - 1; i >= 0; i--) {
+      if (outputLines[i].startsWith("data: ")) {
+        try {
+          const chunkData = JSON.parse(outputLines[i].slice(6));
+          chunkData.usage = lastUsage;
+          outputLines[i] = `data: ${JSON.stringify(chunkData)}`;
+        } catch {
+          // Not JSON, skip
+        }
+        break;
+      }
     }
   }
 
