@@ -1,11 +1,26 @@
 openapi: 3.0.3
 info:
-  title: Llama Proxy API
-  description: OpenAI-compatible proxy to local llama.cpp server
-  version: 1.0.0
+  title: llamacpp-proxy API
+  description: |
+    OpenAI-compatible proxy server for llama.cpp with **dynamic model detection** and **thinking mode support**.
+    
+    ## Model Naming
+    
+    Use suffixes to control thinking mode:
+    - `*-Think` - Enables thinking mode (e.g., `MyModel-Think`)
+    - `*-No-Think` - Passthrough mode (e.g., `MyModel-No-Think`)
+    - No suffix - Passthrough mode (e.g., `MyModel`)
+    
+    The proxy automatically extracts the real model name from incoming requests.
+  version: 1.0.8
 servers:
   - url: http://127.0.0.1:4000
     description: Local proxy server
+tags:
+  - name: completions
+    description: Chat and text completion endpoints
+  - name: models
+    description: Model listing endpoints
 
 paths:
   /chat/completions:
@@ -144,28 +159,46 @@ components:
   schemas:
     ChatCompletionRequest:
       type: object
+      required:
+        - model
+        - messages
       properties:
         model:
           type: string
-          description: Model name (e.g., Qwen3.5-35B-A3B-T-Think)
+          description: Model name with optional suffix (e.g., `MyModel-Think`, `MyModel-No-Think`)
+          example: Qwen3.5-35B-A3B-T-Think
         messages:
           type: array
+          description: List of chat messages
           items:
             $ref: '#/components/schemas/Message'
         chat_template_kwargs:
           type: object
-          description: Additional template parameters
+          description: Additional template parameters passed to llama.cpp
+          properties:
+            enable_thinking:
+              type: boolean
+              description: Enable thinking mode
 
     CompletionRequest:
       type: object
+      required:
+        - model
+        - prompt
       properties:
         model:
           type: string
+          description: Model name with optional suffix
+          example: MyModel-Think
         prompt:
           type: string
+          description: Text prompt to complete
 
     Message:
       type: object
+      required:
+        - role
+        - content
       properties:
         role:
           type: string
@@ -173,8 +206,24 @@ components:
             - user
             - assistant
             - system
+          description: Message role
         content:
           type: string
+          description: Message content
+
+    Model:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Model identifier
+          example: Qwen3.5-35B-A3B-T-Think
+        object:
+          type: string
+          example: model
+        owned_by:
+          type: string
+          example: local
 
     ModelList:
       type: object
@@ -184,25 +233,17 @@ components:
           example: list
         data:
           type: array
+          description: List of available models
           items:
             $ref: '#/components/schemas/Model'
-
-    Model:
-      type: object
-      properties:
-        id:
-          type: string
-        object:
-          type: string
-          example: model
-        owned_by:
-          type: string
-          example: local
 
     Error:
       type: object
       properties:
         error:
           type: string
+          description: Error type
+          example: proxy_error
         message:
           type: string
+          description: Error message

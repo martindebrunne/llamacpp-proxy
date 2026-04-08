@@ -1,15 +1,23 @@
 {
-  "name": "llama-proxy",
-  "version": "1.0.7",
-  "description": "Proxy server for llama.cpp with model name transformation",
+  "name": "llamacpp-proxy",
+  "version": "1.0.8",
+  "description": "OpenAI-compatible proxy server for llama.cpp with dynamic model detection and thinking mode support",
   "type": "module",
   "main": "proxy.js",
   "scripts": {
     "start": "node proxy.js"
   },
-  "keywords": ["proxy", "llama", "ai"],
+  "keywords": ["llama.cpp", "proxy", "openai", "ai", "llm", "inference"],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "bugs": {
+    "url": ""
+  },
+  "homepage": "https://github.com/USER/llamacpp-proxy#readme",
   "dependencies": {
     "express": "^4.18.2",
     "http-proxy-middleware": "^2.0.6"

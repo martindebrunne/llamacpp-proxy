@@ -1,7 +1,7 @@
 # Llama Proxy API
 
 ## Overview
-OpenAI-compatible proxy server for llama.cpp with model name abstraction for controlling thinking mode.
+OpenAI-compatible proxy server for llama.cpp with **dynamic model detection** and model name abstraction for controlling thinking mode.
 
 ## Endpoints
 
@@ -13,13 +13,22 @@ List available models with Think/No-Think variants.
 
 ## Model Naming
 
+### Dynamic Model Detection
+The proxy automatically extracts the real model name from incoming requests:
+
+| Incoming Model | Upstream Model | Behavior |
+|----------------|----------------|----------|
+| `MyModel-Think` | `MyModel` | Enables thinking mode |
+| `MyModel-No-Think` | `MyModel` | Passthrough (no transformation) |
+| `MyModel` | `MyModel` | Passthrough (no transformation) |
+
 ### Think Mode
 Use `*-Think` suffix to enable thinking mode:
-- `Qwen3.5-35B-A3B-T-Think`
+- `Qwen3.5-35B-A3B-T-Think` → upstream: `Qwen3.5-35B-A3B-T`
 
 ### No-Think Mode
 Use `*-No-Think` suffix for passthrough:
-- `Qwen3.5-35B-A3B-T-No-Think`
+- `Qwen3.5-35B-A3B-T-No-Think` → upstream: `Qwen3.5-35B-A3B-T`
 
 ### Other Models
 Models without `*-Think` or `*-No-Think` suffix are passed through without modification.
@@ -33,7 +42,6 @@ Models without `*-Think` or `*-No-Think` suffix are passed through without modif
 Si le modèle upstream ne supporte pas cette option, la requête échouera avec une erreur 400.
 
 ### Compatible Models
-- Qwen3.5-35B-A3B-T (et variantes avec support thinking)
 - Tout modèle llama.cpp configuré avec `--chat-template` supportant `enable_thinking`
 
 ### Incompatible Models
@@ -49,7 +57,7 @@ Si le modèle upstream ne supporte pas cette option, la requête échouera avec 
 npm start
 
 # Or with custom ports
-node proxy2.js 4000:8080
+node proxy.js 4000:8080
 ```
 
 ### Example Request (Think Mode)
@@ -57,7 +65,7 @@ node proxy2.js 4000:8080
 curl -s http://localhost:4000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "Qwen3.5-35B-A3B-T-Think",
+    "model": "MyModel-Think",
     "messages": [{"role": "user", "content": "Hello"}]
   }'
 ```
@@ -67,7 +75,7 @@ curl -s http://localhost:4000/v1/chat/completions \
 curl -s http://localhost:4000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "Qwen3.5-35B-A3B-T-No-Think",
+    "model": "MyModel-No-Think",
     "messages": [{"role": "user", "content": "Hello"}]
   }'
 ```

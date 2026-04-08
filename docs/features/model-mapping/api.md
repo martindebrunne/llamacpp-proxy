@@ -5,7 +5,7 @@
 ### Input (Client Request)
 ```json
 {
-  "model": "Qwen3.5-35B-A3B-T-Think",
+  "model": "MyModel-Think",
   "messages": [...],
   "chat_template_kwargs": {}
 }
@@ -14,7 +14,7 @@
 ### Output (Upstream Request)
 ```json
 {
-  "model": "Qwen3.5-35B-A3B-T",
+  "model": "MyModel",
   "messages": [...],
   "chat_template_kwargs": {
     "enable_thinking": true
@@ -26,9 +26,21 @@
 
 | Input Model Pattern | Output Model | enable_thinking |
 |---------------------|--------------|-----------------|
-| `*-Think` | `Qwen3.5-35B-A3B-T` | `true` |
-| `*-No-Think` | `Qwen3.5-35B-A3B-T` | `false` |
+| `*-Think` | `MyModel` (suffix removed) | `true` |
+| `*-No-Think` | `MyModel` (suffix removed) | Passthrough (unchanged) |
 | Other | Unchanged | Unchanged |
+
+## Dynamic Model Detection
+
+The proxy automatically extracts the real model name from any incoming request:
+
+| Client Model | Extracted Model |
+|--------------|-----------------|
+| `Qwen3.5-35B-A3B-T-Think` | `Qwen3.5-35B-A3B-T` |
+| `Llama3-70B-Think` | `Llama3-70B` |
+| `MyCustomModel-No-Think` | `MyCustomModel` |
+
+This makes the proxy compatible with **any model** served by llama.cpp.
 
 ## chat_template_kwargs Handling
 
@@ -51,3 +63,12 @@
     "enable_thinking": true
   }
 }
+```
+
+## Helper Functions
+
+| Function | Purpose |
+|----------|---------|
+| `extractRealModel(model)` | Extract real model by removing `-Think` or `-No-Think` suffix |
+| `hasModelSuffix(model)` | Check if model has a suffix |
+| `mapRequest(body)` | Transform request body for upstream |
