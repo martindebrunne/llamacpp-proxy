@@ -680,15 +680,44 @@ app.post(["/completions", "/v1/completions"], async (req, res) => {
   await forwardJsonPost(req, res, "/v1/completions");
 });
 
-// optionnel : exposer une liste simple de modèles logiques à Cline
-app.get(["/models", "/v1/models"], (_req, res) => {
-  res.json({
-    object: "list",
-    data: [
-      { id: `${REAL_MODEL}-Think`, object: "model", owned_by: "local" },
-      { id: `${REAL_MODEL}-No-Think`, object: "model", owned_by: "local" },
-    ],
-  });
+// Exposer la liste des modèles avec variantes Think/No-Think
+app.get(["/models", "/v1/models"], async (_req, res) => {
+  try {
+    // Fetch upstream models
+    const upstreamResponse = await fetch(`${LLAMA_ORIGIN}/v1/models`);
+    let upstreamModels = [];
+    
+    if (upstreamResponse.ok) {
+      const upstreamData = await upstreamResponse.json();
+      upstreamModels = upstreamData.data || [];
+    }
+    
+    // Build model list with Think/No-Think variants
+    const modelData = upstreamModels.map(model => {
+      const modelId = model.id;
+      return [
+        { id: `${modelId}-Think`, object: "model", owned_by: "local" },
+        { id: `${modelId}-No-Think`, object: "model", owned_by: "local" },
+      ];
+    }).flat();
+    
+    // Add upstream models without variants
+    modelData.push(...upstreamModels);
+    
+    res.json({
+      object: "list",
+      data: modelData,
+    });
+  } catch (e) {
+    // Fallback to basic model list if upstream is unavailable
+    res.json({
+      object: "list",
+      data: [
+        { id: `${REAL_MODEL}-Think`, object: "model", owned_by: "local" },
+        { id: `${REAL_MODEL}-No-Think`, object: "model", owned_by: "local" },
+      ],
+    });
+  }
 });
 
 // tout le reste = passthrough brut vers llama-server

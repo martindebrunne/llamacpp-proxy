@@ -18,6 +18,8 @@
 - ✅ Real-time streaming with direct res.write() calls
 - ✅ Separate usage chunk for cleaner client parsing
 - ✅ Comprehensive error handling with try/catch/finally
+- ✅ Passthrough for non-Think/No-Think models
+- ✅ Dynamic model listing from upstream with Think/No-Think variants
 
 ### proxy2.js Features
 - ✅ Conditional response sanitization (Think mode only)
@@ -44,10 +46,10 @@
 
 ## Current Status
 
-**Version 1.0.9** - Real-time streaming with separate usage chunk
+**Version 1.0.10** - Dynamic model listing with Think/No-Think variants
 
 - proxy.js: Base implementation (stable)
-- proxy2.js: Enhanced with Think/No-Think differentiation, usage preservation, and real-time streaming (stable)
+- proxy2.js: Enhanced with Think/No-Think differentiation, usage preservation, real-time streaming, and dynamic model listing (stable)
 
 ## Known Issues
 
@@ -65,3 +67,6 @@ None currently.
 | 2026-08-08 | Usage metadata preservation | Required for token billing/monitoring |
 | 2026-08-08 | Real-time streaming | More efficient than buffering |
 | 2026-08-08 | Separate usage chunk | Easier for clients to parse |
+| 2026-08-08 | Passthrough for unknown models | Flexibility for other models |
+| 2026-08-08 | Dynamic model listing | Reflect upstream models accurately |
+| 2026-08-08 | llama.cpp compatibility warning | Prevent user confusion |

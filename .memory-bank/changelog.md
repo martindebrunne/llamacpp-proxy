@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.10] - 2026-08-08
+
+### Changed
+- Updated `/v1/models` route to fetch upstream models and add Think/No-Think variants
+- Added fallback to basic model list if upstream is unavailable
+- Added llama.cpp compatibility warning to documentation
+
+### Added
+- Dynamic model listing from upstream llama.cpp server
+- Think/No-Think variants for all upstream models
+
+---
+
 ## [1.0.9] - 2026-08-08
 
 ### Changed

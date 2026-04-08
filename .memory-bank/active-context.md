@@ -1,7 +1,7 @@
 # Active Context: Llama Proxy
 
 ## Current Work Focus
-Refactor streaming response handling for real-time chunk processing and improved usage metadata handling.
+Update /v1/models route to return upstream models with Think/No-Think variants, and document llama.cpp compatibility requirements.
 
 ## Recent Changes
 | Date | Change |
@@ -25,10 +25,12 @@ Refactor streaming response handling for real-time chunk processing and improved
 | 2026-08-08 | Added parseSseEventBlock(), serializeSseEvent(), createSseChunkFromTemplate(), splitSseBlocks() |
 | 2026-08-08 | Usage metadata now written in separate chunk after content |
 | 2026-08-08 | Added comprehensive error handling with try/catch/finally |
+| 2026-08-08 | Updated /v1/models route to fetch upstream models and add Think/No-Think variants |
+| 2026-08-08 | Added llama.cpp compatibility warning to documentation |
 
 ## Next Steps
-- Monitor streaming performance improvements
-- Verify usage metadata appears correctly in client applications
+- Test /v1/models endpoint with upstream llama.cpp server
+- Verify Think/No-Think variants are correctly generated for all upstream models
 
 ## Important Patterns
 - **Model name transformation** via `chat_template_kwargs`
@@ -48,6 +50,8 @@ Refactor streaming response handling for real-time chunk processing and improved
 - **Real-time streaming** with direct `res.write()` calls
 - **Separate usage chunk** for cleaner client parsing
 - **Comprehensive error handling** with proper cleanup
+- **Dynamic model listing** from upstream with Think/No-Think variants
+- **llama.cpp compatibility requirement** for thinking mode
 
 ## Learnings
 - Single-file Express apps are simple to deploy
@@ -69,3 +73,5 @@ Refactor streaming response handling for real-time chunk processing and improved
 - **Real-time streaming is more efficient than buffering entire response**
 - **Separate usage chunk makes it easier for clients to parse**
 - **Error handling must release reader lock in finally block**
+- **/v1/models must fetch upstream and add variants dynamically**
+- **llama.cpp model MUST support enable_thinking for thinking mode to work**
