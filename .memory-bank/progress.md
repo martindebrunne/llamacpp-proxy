@@ -1,31 +1,54 @@
 # Progress: Llama Proxy
 
 ## What Works
-- [x] Proxy server starts on port 4000
-- [x] OpenAI-compatible routes intercepted (`/chat/completions`, `/completions`)
-- [x] Model name transformation (`*-Think` / `*-No-Think`)
-- [x] Streaming response forwarding
-- [x] Passthrough for all other routes
-- [x] `/models` endpoint returns logical model list
-- [x] Authorization header passthrough
-- [x] Error handling with standardized JSON responses
+
+### Core Functionality
+- ✅ Express.js proxy server on port 4000
+- ✅ Model name transformation (Think/No-Think)
+- ✅ OpenAI-compatible API endpoints
+- ✅ Streaming response passthrough
+- ✅ Authorization header passthrough
+- ✅ WebSocket passthrough via http-proxy-middleware
+- ✅ Async logging with queue-based batching
+- ✅ Log rotation (time and size-based)
+- ✅ Console logging with compressed format
+- ✅ File logging with complete payloads
+
+### proxy2.js Features
+- ✅ Conditional response sanitization (Think mode only)
+- ✅ Reasoning field filtering
+- ✅ XML block extraction from reasoning
+- ✅ SSE parsing and reconstruction
+- ✅ JSON sanitization for choices/messages
+- ✅ Content recovery from reasoning
+- ✅ No-Think mode passthrough (no transformation)
 
 ## What's Left to Build
-- [ ] Environment variable configuration
-- [ ] Unit tests
-- [ ] Integration tests
+
+### Potential Enhancements
+- [ ] Configuration file for sanitization toggle
 - [ ] Health check endpoint
-- [ ] Rate limiting (optional)
+- [ ] Metrics/monitoring
+- [ ] Rate limiting
+- [ ] Authentication (if needed)
 
 ## Current Status
-**Complete** - Core functionality implemented and documented.
+
+**Version 1.0.7** - Enhanced with conditional sanitization
+
+- proxy.js: Base implementation (stable)
+- proxy2.js: Enhanced with Think/No-Think differentiation (stable)
 
 ## Known Issues
-None.
+
+None currently.
 
 ## Evolution of Decisions
-| Decision | Original | Current | Reason |
-|----------|----------|---------|--------|
-| Config | Hardcoded | Hardcoded | Simplicity for local use |
-| Auth | None | None | Local/trusted network |
-| Logging | Minimal | Console logs | Debugging support |
+
+| Date | Decision | Reason |
+|------|----------|--------|
+| Initial | Single-file architecture | Simplicity |
+| 2026-07-04 | Async logging | Prevent blocking |
+| 2026-07-04 | No truncation | Complete debugging data |
+| 2026-08-08 | proxy2.js with sanitization | Better answers with Think mode |
+| 2026-08-08 | No-Think passthrough | User preference for no transformation |

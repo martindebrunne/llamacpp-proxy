@@ -1,34 +1,25 @@
 # Active Context: Llama Proxy
 
 ## Current Work Focus
-Removed payload truncation from file logs to preserve complete request/response data.
+Enhanced proxy2.js with conditional response sanitization and No-Think passthrough mode.
 
 ## Recent Changes
 | Date | Change |
 |------|--------|
-| 2026-07-04 | Created memory-bank documentation |
-| 2026-07-04 | Created docs/api and docs/features structure |
-| 2026-07-04 | Added async logger module (lib/logger.js) |
-| 2026-07-04 | Integrated logging into proxy.js |
-| 2026-07-04 | Created logs/ directory with README |
-| 2026-07-04 | Added request/response payload logging |
-| 2026-07-04 | Added response collection for streaming responses |
-| 2026-07-04 | Fixed ReadableStream locked error |
-| 2026-07-04 | Created scripts/view-logs.js compressed log viewer |
-| 2026-07-04 | Added thinking mode indicator to logs |
-| 2026-07-04 | Removed verbose payload logging from main logs |
-| 2026-07-04 | Added console logging with compressed format |
-| 2026-07-04 | Added thinking mode indicator (✓/✗) in console |
-| 2026-07-04 | Added status indicator (✓200/✗500) in console |
-| 2026-07-04 | Added command line port configuration (node proxy.js 3000:8081) |
-| 2026-07-04 | Added port parsing with environment variable fallback |
-| 2026-07-04 | Created package.json with npm start script |
-| 2026-07-04 | Fixed log file format to include full request/response payloads |
-| 2026-07-04 | Removed payload truncation from file logs |
+| 2026-08-08 | Created proxy2.js with response sanitization for reasoning models |
+| 2026-08-08 | Added reasoning field filtering (reasoning_content, reasoning) |
+| 2026-08-08 | Added XML block extraction from reasoning text |
+| 2026-08-08 | Added SSE parsing and reconstruction |
+| 2026-08-08 | Added JSON sanitization for choices and messages |
+| 2026-08-08 | Added content recovery from reasoning when content is empty |
+| 2026-08-08 | Modified mapRequest() to return body unchanged in No-Think mode |
+| 2026-08-08 | Modified sanitizeResponseText() to skip sanitization in No-Think mode |
+| 2026-08-08 | Updated forwardJsonPost() to pass incomingModel to sanitizeResponseText() |
 
 ## Next Steps
-- Monitor console output for debugging
-- Consider adding log level filtering option
+- Monitor proxy2.js performance with Think/No-Think modes
+- Consider adding configuration for sanitization toggle
+- Document No-Think passthrough behavior
 
 ## Important Patterns
 - Model name transformation via `chat_template_kwargs`
@@ -42,6 +33,8 @@ Removed payload truncation from file logs to preserve complete request/response 
 - **Status indicator (✓200/✗500)**
 - **Command line port configuration (proxyPort:upstreamPort)**
 - **Port configuration priority: CLI > ENV > defaults**
+- **Conditional response sanitization (Think mode only)**
+- **No-Think mode passthrough (no transformation)**
 
 ## Learnings
 - Single-file Express apps are simple to deploy
@@ -56,3 +49,6 @@ Removed payload truncation from file logs to preserve complete request/response 
 - npm scripts provide convenient entry point
 - Dual logging (console compressed + file full) is optimal for debugging
 - No truncation ensures complete debugging data in logs
+- **proxy2.js provides better answers with Think mode enabled**
+- **No-Think mode in proxy2.js is now pure passthrough**
+- **Reasoning field filtering only applies to Think mode**
