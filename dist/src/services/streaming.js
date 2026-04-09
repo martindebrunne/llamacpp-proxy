@@ -5,7 +5,26 @@
 import { parseSseEventBlock, serializeSseEvent, createSseChunkFromTemplate, splitSseBlocks, } from "../utils/sse.js";
 import { pickBestRecoveredOutput } from "../utils/reasoning.js";
 import { isNonEmptyString, isNonEmptyArray, hasUsableContent } from "../utils/typeGuards.js";
-import { error } from "../../lib/index.js";
+import { error, consoleRequestLogEnd, logRequestEnd, logStreamChunk } from "../../lib/index.js";
+/**
+ * Log request end for streaming routes (console only)
+ */
+async function logStreamingRequestEnd(req, mapped, status, duration, responseBodySize, correlationId) {
+    const upstreamModel = mapped?.model;
+    const thinking = mapped?.chat_template_kwargs?.enable_thinking;
+    const thinkingMode = thinking !== undefined ? String(thinking) : undefined;
+    consoleRequestLogEnd({
+        method: req.method,
+        path: req.originalUrl,
+        status,
+        duration,
+        size: responseBodySize,
+        upstreamModel,
+        thinkingMode,
+        stream: true,
+        correlationId,
+    });
+}
 /**
  * Forward streaming response with real-time processing
  */
@@ -19,6 +38,7 @@ export async function forwardStreamingResponse(req, res, upstream, mapped, _upst
     const decoder = new TextDecoder("utf-8");
     let rawResponseText = "";
     let sseBuffer = "";
+    let responseBodySize = 0;
     const state = {
         assistantRoleSent: false,
         accumulatedReasoning: "",
@@ -63,6 +83,22 @@ export async function forwardStreamingResponse(req, res, upstream, mapped, _upst
                 for (const choice of chunk.choices) {
                     const delta = choice?.delta;
                     const message = choice?.message;
+                    // Log stream chunk to file (Option C - Hybrid)
+                    const correlationId = req.correlationId;
+                    if (correlationId) {
+                        // Only log chunks that have content or tool calls
+                        const hasContent = delta?.content || message?.content;
+                        const hasToolCalls = delta?.tool_calls || message?.tool_calls;
+                        if (hasContent || hasToolCalls) {
+                            logStreamChunk({
+                                timestamp: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+                                type: "STREAM_CHUNK",
+                                correlationId,
+                                chunkIndex: 0,
+                                data: chunk,
+                            });
+                        }
+                    }
                     if (delta && typeof delta === "object") {
                         if (delta.role === "assistant" && !state.assistantRoleSent) {
                             res.write(serializeSseEvent(createSseChunkFromTemplate(chunk, choice, { role: "assistant" }, mapped?.model)));
@@ -142,30 +178,39 @@ export async function forwardStreamingResponse(req, res, upstream, mapped, _upst
             };
             res.write(serializeSseEvent(usageChunk));
         }
+        const duration = Date.now() - startTime;
+        responseBodySize = Buffer.byteLength(rawResponseText, "utf-8");
+        // Log to console FIRST (synchronous)
+        const correlationId = req.correlationId;
+        await logStreamingRequestEnd(req, mapped, upstream.statusCode, duration, responseBodySize, correlationId);
+        // Then write response
         res.write("data: [DONE]\n\n");
         res.end();
-        const duration = Date.now() - startTime;
+        // Then log to file (async)
+        const upstreamModel = mapped?.model;
+        const thinking = mapped?.chat_template_kwargs?.enable_thinking;
+        const thinkingMode = thinking !== undefined ? String(thinking) : undefined;
         const responseForLog = { text: rawResponseText, json: null };
         try {
             responseForLog.json = JSON.parse(rawResponseText);
         }
         catch { }
-        // Log request (deferred to avoid circular dependency)
-        const { requestLog } = await import("../../lib/index.js");
-        await requestLog({
-            method: req.method,
-            path: req.originalUrl,
-            incomingModel: req.body?.model,
-            upstreamModel: mapped?.model,
-            thinking: mapped?.chat_template_kwargs?.enable_thinking,
+        await logRequestEnd({
+            timestamp: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+            type: "REQUEST_END",
+            correlationId,
             status: upstream.statusCode,
             duration,
-            requestPayload: req.body,
+            responseSize: responseBodySize,
+            stream: true,
+            upstreamModel,
+            thinkingMode,
             responsePayload: responseForLog.json || responseForLog.text,
         });
     }
     catch (e) {
         const duration = Date.now() - startTime;
+        const correlationId = req.correlationId;
         error("Streaming request failed", `${req.originalUrl} | ${String(e)}`);
         if (!res.headersSent) {
             res.status(500).json({
@@ -180,16 +225,16 @@ export async function forwardStreamingResponse(req, res, upstream, mapped, _upst
             catch { }
         }
         // Log error request
-        const { requestLog } = await import("../../lib/index.js");
-        await requestLog({
-            method: req.method,
-            path: req.originalUrl,
-            incomingModel: req.body?.model,
-            upstreamModel: mapped?.model,
-            thinking: mapped?.chat_template_kwargs?.enable_thinking,
+        await logRequestEnd({
+            timestamp: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+            type: "REQUEST_END",
+            correlationId,
             status: 500,
             duration,
-            requestPayload: req.body,
+            responseSize: Buffer.byteLength(rawResponseText, "utf-8"),
+            stream: true,
+            upstreamModel: mapped?.model,
+            thinkingMode: undefined,
             responsePayload: { text: rawResponseText, json: null },
         });
     }

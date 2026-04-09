@@ -14,12 +14,12 @@ List available models with Think/No-Think variants.
 ## Model Naming
 
 ### Dynamic Model Detection
-The proxy automatically extracts the real model name from incoming requests:
+The proxy rewrites model names only for `*-Think` requests. Other modes are passed through unchanged:
 
 | Incoming Model | Upstream Model | Behavior |
 |----------------|----------------|----------|
 | `MyModel-Think` | `MyModel` | Enables thinking mode |
-| `MyModel-No-Think` | `MyModel` | Passthrough (no transformation) |
+| `MyModel-No-Think` | `MyModel-No-Think` | Passthrough (no transformation) |
 | `MyModel` | `MyModel` | Passthrough (no transformation) |
 
 ### Think Mode
@@ -28,7 +28,7 @@ Use `*-Think` suffix to enable thinking mode:
 
 ### No-Think Mode
 Use `*-No-Think` suffix for passthrough:
-- `Qwen3.5-35B-A3B-T-No-Think` → upstream: `Qwen3.5-35B-A3B-T`
+- `Qwen3.5-35B-A3B-T-No-Think` → upstream: `Qwen3.5-35B-A3B-T-No-Think` (unchanged)
 
 ### Other Models
 Models without `*-Think` or `*-No-Think` suffix are passed through without modification.
@@ -57,7 +57,7 @@ Si le modèle upstream ne supporte pas cette option, la requête échouera avec 
 npm start
 
 # Or with custom ports
-node proxy.js 4000:8080
+npm start -- 4000:8080
 ```
 
 ### Example Request (Think Mode)

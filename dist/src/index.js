@@ -27,12 +27,26 @@ process.on("SIGINT", async () => {
     await flushLogs();
     process.exit(0);
 });
+// Handle uncaught exceptions
+process.on("uncaughtException", async (err) => {
+    info("Uncaught exception", err.message);
+    const { flushLogs } = await import("../lib/logger.js");
+    await flushLogs();
+    process.exit(1);
+});
+// Handle unhandled promise rejections
+process.on("unhandledRejection", async (reason, _promise) => {
+    info("Unhandled rejection at", String(reason));
+    const { flushLogs } = await import("../lib/logger.js");
+    await flushLogs();
+    process.exit(1);
+});
 // Parse JSON for intercepted routes
 app.use(["/chat/completions", "/v1/chat/completions", "/completions", "/v1/completions"], express.json({ limit: "5mb" }));
+// Logging middleware for all requests (before routes to ensure logging)
+app.use(loggingMiddleware);
 // Use routes
 app.use("/", routes);
-// Logging middleware for passthrough requests
-app.use(loggingMiddleware);
 // Proxy everything else to upstream
 app.use(createProxyMiddleware({
     target: config.LLAMA_ORIGIN,

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The llamacpp-proxy implements a dual logging system with separate outputs for console (TTY) and file storage.
+The llamacpp-proxy implements an enhanced dual logging system with separate outputs for console (TTY) and file storage. The new system uses a two-phase approach (request start + request end) with correlation IDs for tracking requests across logs.
 
 ## Logging System Architecture
 
@@ -10,32 +10,39 @@ The llamacpp-proxy implements a dual logging system with separate outputs for co
 
 Real-time logging to terminal with compact format for easy monitoring:
 
-- **Startup messages**: `consoleInfo()` - Server status, port, target
-- **Request logs**: `consoleRequestLog()` - Method, path, model, thinking, status, duration
-- **Response logs**: `consoleResponseLog()` - Method, path, model, status, size, duration
+- **Request Start**: `consoleRequestLogStart()` - Logs when request arrives
+- **Request End**: `consoleRequestLogEnd()` - Logs when response completes
 
-**Format**: `[HH:MM:SS]` timestamp, no symbols (uses `true`/`false` for thinking)
+**Format**: `[HH:MM:SS]` timestamp, two lines per request
 
 **Example**:
 ```
-[04:54:01] Proxy started listening on http://127.0.0.1:4001
-[04:54:01] Passthrough target http://127.0.0.1:8080
-[04:54:01] Dynamic model detection enabled - real model extracted from incoming requests
-[04:54:01] REQ     GET    /v1/models | model=- -> - | thinking=- | status=200 | duration=5ms
-[04:54:01] RESP    GET    /v1/models | model=- | status=200 | size=1.2KB | duration=5ms
+[04:54:01] REQ_IN  POST   /v1/chat/completions | model=llama-3.2 | thinking=auto | correlation=abc123
+[04:54:02] REQ_OUT POST   /v1/chat/completions | status=200 | duration=1234ms | size=2KB | upstream=llama-3.1 | thinking=auto | stream=false | correlation=abc123
 ```
 
-### File Output (logs/proxy-YYYY-MM-DD.log) - Full Format
+### File Output (`logs/proxy-*.log`) - JSON Format
 
 Complete logging with all details for debugging and analysis:
 
-- Full request/response payloads (no truncation)
-- Async queue-based batching to prevent blocking
-- Rotation: Time-based (24h) and size-based (10MB max)
+- **Request Start Entry**: Full request payload, method, path, model, thinking mode
+- **Request End Entry**: Status, duration, response size, upstream model, thinking mode, full response payload
+- **Streaming Chunks**: Each chunk logged individually (Option C - Hybrid)
 
-**Example**:
+**Rotation**: Time-based (24h) and size-based (5MB max)
+
+**Example - Non-Streaming**:
+```json
+{"timestamp":"2026-10-04 04:54:01.123","type":"REQUEST_START","correlationId":"abc123","method":"POST","path":"/v1/chat/completions","stream":false,"incomingModel":"llama-3.2","upstreamModel":null,"thinkingMode":"auto","requestPayload":{"model":"llama-3.2","messages":[{"role":"user","content":"Hello"}]}}
+{"timestamp":"2026-10-04 04:54:02.357","type":"REQUEST_END","correlationId":"abc123","status":200,"duration":1234,"responseSize":2048,"stream":false,"upstreamModel":"llama-3.1","thinkingMode":"auto","responsePayload":{"choices":[{"message":{"content":"Hello there!"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}}
 ```
-[2026-09-04 04:54:01.123] REQUEST GET /v1/models | method=GET | path=/v1/models | incoming=- | upstream=- | status=200 | duration=5ms | request= | response={"object":"list","data":[...]}
+
+**Example - Streaming**:
+```json
+{"timestamp":"2026-10-04 04:54:01.123","type":"REQUEST_START","correlationId":"def456","method":"POST","path":"/v1/chat/completions","stream":true,"incomingModel":"llama-3.2","upstreamModel":null,"thinkingMode":"auto","requestPayload":{"model":"llama-3.2","messages":[{"role":"user","content":"Write a story"}],"stream":true}}
+{"timestamp":"2026-10-04 04:54:01.200","type":"STREAM_CHUNK","correlationId":"def456","chunkIndex":0,"data":{"choices":[{"delta":{"content":"Once"}}]}}
+{"timestamp":"2026-10-04 04:54:01.250","type":"STREAM_CHUNK","correlationId":"def456","chunkIndex":0,"data":{"choices":[{"delta":{"content":" upon"}}]}}
+{"timestamp":"2026-10-04 04:54:06.800","type":"REQUEST_END","correlationId":"def456","status":200,"duration":5678,"responseSize":16384,"stream":true,"upstreamModel":"llama-3.1","thinkingMode":"auto","responsePayload":{"choices":[{"message":{"content":"Once upon a time...!"}}],"usage":{"prompt_tokens":100,"completion_tokens":500}}}
 ```
 
 ## Logging Functions
@@ -44,53 +51,86 @@ Complete logging with all details for debugging and analysis:
 |----------|---------|------|---------|
 | `consoleInfo(message, details)` | ✓ | ✗ | TTY startup messages |
 | `info(message, details)` | ✗ | ✓ | File-only info logs |
-| `consoleRequestLog(entry)` | ✓ | ✗ | TTY request logs |
-| `requestLog(entry)` | ✗ | ✓ | File request logs with payloads |
-| `consoleResponseLog(entry)` | ✓ | ✗ | TTY response logs |
+| `consoleRequestLogStart(entry)` | ✓ | ✗ | TTY request start logs |
+| `consoleRequestLogEnd(entry)` | ✓ | ✗ | TTY request end logs |
+| `logRequestStart(entry)` | ✗ | ✓ | File request start logs with payload |
+| `logRequestEnd(entry)` | ✗ | ✓ | File request end logs with payload |
+| `logStreamChunk(entry)` | ✗ | ✓ | File streaming chunk logs |
 | `error(message, details)` | ✗ | ✓ | File error logs |
 
 ## Implementation
 
-### Console Request Log Entry
+### Console Request Log Start Entry
 
 ```typescript
-interface RequestLogConsoleEntry {
+interface RequestLogConsoleStartEntry {
   method: string;
   path: string;
   incomingModel: string | undefined;
-  upstreamModel: string | undefined;
-  thinking: boolean | undefined;
-  status: number;
-  duration: number;
+  thinkingMode: string | undefined;
+  correlationId: string;
 }
 ```
 
-### Console Response Log Entry
+### Console Request Log End Entry
 
 ```typescript
-interface ResponseLogConsoleEntry {
+interface RequestLogConsoleEndEntry {
   method: string;
   path: string;
-  model: string | undefined;
   status: number;
+  duration: number;
   size: number;
-  duration: number;
+  upstreamModel: string | undefined;
+  thinkingMode: string | undefined;
+  stream: boolean | undefined;
+  correlationId: string;
 }
 ```
 
-### File Request Log Entry
+### File Request Start Entry
 
 ```typescript
-interface RequestLogEntry {
+interface RequestLogStartEntry {
+  timestamp: string;
+  type: "REQUEST_START";
+  correlationId: string;
   method: string;
   path: string;
+  stream: boolean;
   incomingModel: string | undefined;
   upstreamModel: string | undefined;
-  thinking: boolean | undefined;
+  thinkingMode: string | undefined;
+  requestPayload: unknown;
+}
+```
+
+### File Request End Entry
+
+```typescript
+interface RequestLogEndEntry {
+  timestamp: string;
+  type: "REQUEST_END";
+  correlationId: string;
   status: number;
   duration: number;
-  requestPayload: unknown;
+  responseSize: number;
+  stream: boolean;
+  upstreamModel: string | undefined;
+  thinkingMode: string | undefined;
   responsePayload: unknown;
+}
+```
+
+### File Stream Chunk Entry
+
+```typescript
+interface StreamChunkEntry {
+  timestamp: string;
+  type: "STREAM_CHUNK";
+  correlationId: string;
+  chunkIndex: number;
+  data: unknown;
 }
 ```
 
@@ -106,34 +146,83 @@ consoleInfo("Passthrough target", config.LLAMA_ORIGIN);
 consoleInfo("Dynamic model detection enabled - real model extracted from incoming requests");
 ```
 
-### Request Logging
+### Request Start Logging (Middleware)
 
 ```typescript
-import { consoleRequestLog } from "../../lib/index.js";
+import { consoleRequestLogStart, logRequestStart, generateCorrelationId } from "../../lib/logger.js";
 
-consoleRequestLog({
+const correlationId = generateCorrelationId();
+
+consoleRequestLogStart({
   method: req.method,
   path: req.originalUrl || req.url,
   incomingModel: req.body?.model,
-  upstreamModel: "-",
-  thinking: undefined,
-  status: res.statusCode,
-  duration,
+  thinkingMode: extractThinkingMode(req.body),
+  correlationId,
+});
+
+logRequestStart({
+  timestamp: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+  type: "REQUEST_START",
+  correlationId,
+  method: req.method,
+  path: req.originalUrl || req.url,
+  stream: false,
+  incomingModel: req.body?.model,
+  upstreamModel: undefined,
+  thinkingMode: extractThinkingMode(req.body),
+  requestPayload: req.body,
 });
 ```
 
-### Response Logging
+### Request End Logging (Console)
 
 ```typescript
-import { consoleResponseLog } from "../../lib/index.js";
+import { consoleRequestLogEnd } from "../../lib/logger.js";
 
-consoleResponseLog({
+consoleRequestLogEnd({
   method: req.method,
   path: req.originalUrl || req.url,
-  model: req.body?.model,
   status: res.statusCode,
+  duration: Date.now() - startTime,
   size: responseBodySize,
+  upstreamModel: upstreamModel,
+  thinkingMode: thinkingMode,
+  stream: true,
+  correlationId: correlationId,
+});
+```
+
+### Request End Logging (File)
+
+```typescript
+import { logRequestEnd } from "../../lib/logger.js";
+
+await logRequestEnd({
+  timestamp: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+  type: "REQUEST_END",
+  correlationId,
+  status: upstream.status,
   duration,
+  responseSize: responseBodySize,
+  stream: false,
+  upstreamModel,
+  thinkingMode,
+  responsePayload: response?.json ?? response?.text ?? null,
+});
+```
+
+### Stream Chunk Logging
+
+```typescript
+import { logStreamChunk } from "../../lib/logger.js";
+
+await logStreamChunk({
+  timestamp: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+  type: "STREAM_CHUNK",
+  correlationId,
+  chunkIndex: 0,
+  data: chunk,
 });
 ```
 
@@ -141,17 +230,20 @@ consoleResponseLog({
 
 | Decision | Rationale |
 |----------|-----------|
-| Separate console/file output | Console for real-time monitoring, file for detailed debugging |
+| Two-phase logging (start + end) | Status and duration only available at end, but need to know request arrived immediately |
+| Correlation IDs | Track requests across console and file logs |
 | Minified console format | Easy to read in TTY, less visual clutter |
-| Full file format | Complete data for post-mortem analysis |
-| `true`/`false` in console | No symbols, machine-readable |
-| `✓`/`✗` in file | Visual indicators for quick scanning |
-| Human-readable sizes | B, KB, MB in console for quick understanding |
+| Full JSON file format | Complete data for post-mortem analysis and debugging |
+| Streaming chunks logged | Option C - Hybrid provides visibility into streaming progress |
+| Human-readable sizes | B, KB, MB for quick understanding |
 | Async queue-based logging | Prevents blocking request handling |
 | Log rotation | Prevents disk space issues |
 
 ## Files
 
 - `lib/logger.ts` - Core logging implementation
-- `src/middleware/logging.ts` - Request/response logging middleware
-- `logs/proxy-YYYY-MM-DD.log` - Daily log files
+- `lib/index.ts` - Logger exports
+- `src/middleware/logging.ts` - Request start/end middleware
+- `src/services/proxy.ts` - JSON request logging
+- `src/services/streaming.ts` - Streaming request logging
+- `logs/proxy-*.log` - Rotated log files

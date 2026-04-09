@@ -22,7 +22,7 @@ Client → Proxy (4000) → llama-server (8080)
 | Client Model | Upstream Model | Behavior |
 |--------------|----------------|----------|
 | `MyModel-Think` | `MyModel` | Enables `enable_thinking: true` |
-| `MyModel-No-Think` | `MyModel` | Passthrough (no transformation) |
+| `MyModel-No-Think` | `MyModel-No-Think` | Passthrough (no transformation) |
 | `MyModel` | `MyModel` | Passthrough (no transformation) |
 
 ## Request Flow
@@ -41,7 +41,7 @@ Client → Proxy (4000) → llama-server (8080)
 ### No-Think Mode (`*-No-Think`)
 1. Client sends request with model `MyModel-No-Think`
 2. Proxy parses JSON body (for intercepted routes)
-3. `mapRequest()` returns body unchanged
+3. `mapRequest()` returns body unchanged (including model name)
 4. Request forwarded to upstream unchanged
 5. Response passed through unchanged
 6. Usage metadata preserved
@@ -53,7 +53,7 @@ Responses are forwarded from upstream, with conditional processing:
 | Mode | Request Transformed | Response Sanitized | Usage in Separate Chunk |
 |------|--------------------|--------------------|------------------------|
 | Think | ✅ Yes | ✅ Yes (reasoning filtered) | ✅ Yes |
-| No-Think | ❌ No | ❌ No (passthrough) | ✅ Yes |
+| No-Think | ❌ No (passthrough) | ❌ No (passthrough) | ✅ Yes |
 
 ## Usage Metadata
 The `usage` field contains token consumption data:

@@ -40,22 +40,24 @@ sequenceDiagram
     Upstream->>Proxy: response
     Proxy->>Middleware: res.end()
     
+    Middleware->>Console: consoleRequestLogStart()
+    Note over Console: [HH:MM:SS] REQ_IN GET   /v1/models | model=- | thinking=- | correlation=abc123
+    
+    Middleware->>File: logRequestStart()
+    Note over File: {"type":"REQUEST_START","correlationId":"abc123","method":"GET","path":"/v1/models",...}
+    
     Middleware->>Middleware: duration = Date.now() - startTime
-    Middleware->>Console: consoleRequestLog()
-    Note over Console: [HH:MM:SS] REQ GET /v1/models | model=- -> - | thinking=- | status=200 | duration=5ms
+    Middleware->>Console: consoleRequestLogEnd()
+    Note over Console: [HH:MM:SS] REQ_OUT GET   /v1/models | status=200 | duration=5ms | size=1.2KB | upstream=- | thinking=- | stream=- | correlation=abc123
     
-    Middleware->>Console: consoleResponseLog()
-    Note over Console: [HH:MM:SS] RESP GET /v1/models | model=- | status=200 | size=1.2KB | duration=5ms
-    
-    Middleware->>File: requestLog()
-    Note over File: [2026-09-04 HH:MM:SS.mmm] REQUEST GET /v1/models | method=GET | path=/v1/models | ... | response={...}
+    Note over File: REQUEST_END is written by proxy/streaming services for intercepted routes
     
     Proxy->>Client: response
 ```
 
 ## Logging Function Comparison
 
-### Console Request Log
+### Console Request Start Log
 
 ```
 Input:
@@ -63,51 +65,53 @@ Input:
   method: "GET",
   path: "/v1/models",
   incomingModel: undefined,
-  upstreamModel: "-",
-  thinking: undefined,
-  status: 200,
-  duration: 5
+  thinkingMode: undefined,
+  correlationId: "abc123"
 }
 
 Output (TTY):
-[HH:MM:SS] REQ     GET    /v1/models | model=- -> - | thinking=- | status=200 | duration=5ms
+[HH:MM:SS] REQ_IN  GET   /v1/models | model=- | thinking=- | correlation=abc123
 ```
 
-### Console Response Log
+### Console Request End Log
 
 ```
 Input:
 {
   method: "GET",
   path: "/v1/models",
-  model: undefined,
-  status: 200,
-  size: 1234,
-  duration: 5
-}
-
-Output (TTY):
-[HH:MM:SS] RESP    GET    /v1/models | model=- | status=200 | size=1.2KB | duration=5ms
-```
-
-### File Request Log
-
-```
-Input:
-{
-  method: "GET",
-  path: "/v1/models",
-  incomingModel: undefined,
-  upstreamModel: "-",
-  thinking: undefined,
   status: 200,
   duration: 5,
-  requestPayload: {},
-  responsePayload: {"object":"list","data":[...]}
+  size: 1234,
+  upstreamModel: undefined,
+  thinkingMode: undefined,
+  stream: undefined,
+  correlationId: "abc123"
+}
+
+Output (TTY):
+[HH:MM:SS] REQ_OUT GET   /v1/models | status=200 | duration=5ms | size=1.2KB | upstream=- | thinking=- | stream=- | correlation=abc123
+```
+
+### File Request Start Log
+
+```
+Input:
+{
+  "timestamp": "2026-10-04 04:54:01.123",
+  "type": "REQUEST_START",
+  "correlationId": "abc123",
+  method: "GET",
+  path: "/v1/models",
+  incomingModel: undefined,
+  upstreamModel: undefined,
+  thinkingMode: undefined,
+  stream: false,
+  requestPayload: {}
 }
 
 Output (File):
-[2026-09-04 HH:MM:SS.mmm] REQUEST GET /v1/models | method=GET | path=/v1/models | incoming=- | upstream=- | status=200 | duration=5ms | request={} | response={"object":"list","data":[...]}
+{"timestamp":"2026-10-04 04:54:01.123","type":"REQUEST_START","correlationId":"abc123","method":"GET","path":"/v1/models","stream":false,"incomingModel":null,"upstreamModel":null,"thinkingMode":null,"requestPayload":{}}
 ```
 
 ## Log Rotation Flow
@@ -118,8 +122,8 @@ flowchart TD
     B -->|24h elapsed| C[Rotate File]
     B -->|Within 24h| D{Check Size Rotation}
     C --> E[Create New Log File]
-    D -->|>10MB| C
-    D -->|<10MB| F[Append to Current File]
+    D -->|>5MB| C
+    D -->|<=5MB| F[Append to Current File]
     E --> F
     F --> G[Write Entry]
 ```
@@ -137,3 +141,4 @@ sequenceDiagram
     Logger->>Logger: flushQueue()
     Logger->>File: appendFile(logFile, formattedEntry)
     Note over File: Error logged to file only (not TTY)
+```

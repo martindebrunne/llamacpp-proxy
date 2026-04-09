@@ -27,7 +27,7 @@
 | Input Model Pattern | Output Model | enable_thinking |
 |---------------------|--------------|-----------------|
 | `*-Think` | `MyModel` (suffix removed) | `true` |
-| `*-No-Think` | `MyModel` (suffix removed) | Passthrough (unchanged) |
+| `*-No-Think` | `MyModel-No-Think` (unchanged) | Passthrough (unchanged) |
 | Other | Unchanged | Unchanged |
 
 ## Dynamic Model Detection
@@ -38,7 +38,7 @@ The proxy automatically extracts the real model name from any incoming request:
 |--------------|-----------------|
 | `Qwen3.5-35B-A3B-T-Think` | `Qwen3.5-35B-A3B-T` |
 | `Llama3-70B-Think` | `Llama3-70B` |
-| `MyCustomModel-No-Think` | `MyCustomModel` |
+| `MyCustomModel-No-Think` | `MyCustomModel-No-Think` |
 
 This makes the proxy compatible with **any model** served by llama.cpp.
 

@@ -11,17 +11,17 @@ import type { ChatCompletionRequest } from "../types/index.js";
  */
 export function extractRealModel(incomingModel: string | undefined): string | null {
   if (!incomingModel) return null;
-  
+
   // Remove -Think suffix
   if (incomingModel.endsWith("-Think")) {
     return incomingModel.slice(0, -6);
   }
-  
+
   // Remove -No-Think suffix
   if (incomingModel.endsWith("-No-Think")) {
     return incomingModel.slice(0, -11);
   }
-  
+
   // No suffix, return as-is
   return incomingModel;
 }

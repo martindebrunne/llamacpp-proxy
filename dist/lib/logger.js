@@ -6,12 +6,19 @@ import { promises as fs } from "fs";
 import { join } from "path";
 const LOG_DIR = join(process.cwd(), "logs");
 const LOG_FILE_PREFIX = "proxy-";
-const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB
 const LOG_ROTATION_INTERVAL = 86400000; // 24 hours in ms
+const MAX_ROTATION_SUFFIX = 3; // Maximum rotation suffix (_1, _2, _3)
 let currentLogFile = null;
 let lastRotationTime = Date.now();
 let logQueue = [];
 let isFlushing = false;
+/**
+ * Generate a unique correlation ID
+ */
+export function generateCorrelationId() {
+    return `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 9)}`;
+}
 /**
  * Get current date string for log filename
  */
@@ -44,6 +51,72 @@ function getLogFilePath() {
     return join(LOG_DIR, `${LOG_FILE_PREFIX}${date}.log`);
 }
 /**
+ * Get log file path with timestamp (for startup rotation)
+ * Format: proxy-YYYY-MM-DD-HHmmss.log
+ */
+function getLogFilePathWithTimestamp() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    const hours = String(now.getHours()).padStart(2, "0");
+    const minutes = String(now.getMinutes()).padStart(2, "0");
+    const seconds = String(now.getSeconds()).padStart(2, "0");
+    const timestamp = `${year}-${month}-${day}-${hours}${minutes}${seconds}`;
+    return join(LOG_DIR, `${LOG_FILE_PREFIX}${timestamp}.log`);
+}
+/**
+ * Get the next available rotation suffix (_1, _2, _3)
+ */
+async function getNextRotationSuffix(basePath) {
+    for (let i = 1; i <= MAX_ROTATION_SUFFIX; i++) {
+        const rotatedPath = `${basePath}_${i}.log`;
+        try {
+            await fs.stat(rotatedPath);
+            // File exists, try next suffix
+            continue;
+        }
+        catch {
+            // File doesn't exist, this is the next available suffix
+            return i === 1 ? `_1` : `_${i}`;
+        }
+    }
+    // All suffixes up to MAX_ROTATION_SUFFIX are taken, return the last one
+    return `_${MAX_ROTATION_SUFFIX}`;
+}
+/**
+ * Rotate log file based on size (with suffix naming _1, _2, _3)
+ */
+async function rotateBySize() {
+    if (!currentLogFile) {
+        return null;
+    }
+    try {
+        const stats = await fs.stat(currentLogFile);
+        if (stats.size <= MAX_LOG_SIZE) {
+            return currentLogFile; // No rotation needed
+        }
+    }
+    catch {
+        return currentLogFile; // File doesn't exist, no rotation needed
+    }
+    // File exceeds MAX_LOG_SIZE, perform rotation with suffix naming
+    // Get the base path without .log extension
+    const baseName = currentLogFile.replace(/\.log$/, "");
+    const suffix = await getNextRotationSuffix(baseName);
+    const rotatedPath = `${baseName}${suffix}.log`;
+    // Rename the current log file to the rotated path
+    try {
+        await fs.rename(currentLogFile, rotatedPath);
+        // Return the new rotated path so caller can use it
+        return rotatedPath;
+    }
+    catch (e) {
+        console.error("Logger rotation error:", e);
+        return currentLogFile;
+    }
+}
+/**
  * Rotate log file if needed (size or time based)
  */
 async function rotateIfNeeded() {
@@ -53,16 +126,11 @@ async function rotateIfNeeded() {
         currentLogFile = null;
         lastRotationTime = now;
     }
-    // Check size-based rotation
+    // Check size-based rotation with suffix naming
     if (currentLogFile) {
-        try {
-            const stats = await fs.stat(currentLogFile);
-            if (stats.size > MAX_LOG_SIZE) {
-                currentLogFile = null;
-            }
-        }
-        catch {
-            // File doesn't exist yet, that's fine
+        const newLogFile = await rotateBySize();
+        if (newLogFile && newLogFile !== currentLogFile) {
+            currentLogFile = newLogFile;
         }
     }
     if (!currentLogFile) {
@@ -92,6 +160,19 @@ async function writeLogEntry(entry) {
     const line = formatted + "\n";
     try {
         await fs.appendFile(currentLogFile, line);
+    }
+    catch (e) {
+        console.error("Logger write error:", e);
+    }
+}
+/**
+ * Write a JSON log entry to file (one JSON object per line)
+ */
+async function writeJsonLogEntry(entry) {
+    await rotateIfNeeded();
+    const jsonLine = JSON.stringify(entry) + "\n";
+    try {
+        await fs.appendFile(currentLogFile, jsonLine);
     }
     catch (e) {
         console.error("Logger write error:", e);
@@ -130,41 +211,75 @@ function queueLog(entry) {
     }
 }
 /**
- * Log an info message
+ * Format payload for logging (truncate for console, full for file)
  */
-export function info(message, details = "") {
-    queueLog({ level: "INFO", message, details });
-}
-/**
- * Log an error message
- */
-export function error(message, details = "") {
-    queueLog({ level: "ERROR", message, details });
-}
-/**
- * Format payload for logging (no truncation for file logs)
- */
-function formatPayload(payload) {
-    if (!payload)
+export function formatPayload(payload, truncate = false) {
+    if (payload === null || payload === undefined)
         return '';
     try {
-        return typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+        const str = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+        if (truncate && str.length > 200) {
+            return str.substring(0, 200) + '...';
+        }
+        return str;
     }
     catch {
         return String(payload);
     }
 }
 /**
- * Log an info message to console (TTY only, minified format)
+ * Format size in human-readable format
+ */
+export function formatSize(bytes) {
+    if (bytes < 1024)
+        return `${bytes}B`;
+    if (bytes < 1024 * 1024)
+        return `${(bytes / 1024).toFixed(1)}KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+export function consoleRequestLogStart(entry) {
+    const timestamp = getTimestamp().split(" ")[1]?.split(".")[0] ?? "00:00:00"; // HH:MM:SS
+    const method = entry.method || "-";
+    const path = entry.path || "-";
+    const incoming = entry.incomingModel || "-";
+    const thinking = entry.thinkingMode || "-";
+    const correlation = entry.correlationId;
+    console.log(`[${timestamp}] REQ_IN  ${method.padEnd(5)} ${path} | ` +
+        `model=${incoming} | thinking=${thinking} | correlation=${correlation}`);
+}
+export function consoleRequestLogEnd(entry) {
+    const timestamp = getTimestamp().split(" ")[1]?.split(".")[0] ?? "00:00:00"; // HH:MM:SS
+    const method = entry.method || "-";
+    const path = entry.path || "-";
+    const status = entry.status || "-";
+    const duration = entry.duration ? `${entry.duration}ms` : "-";
+    const size = formatSize(entry.size);
+    const upstream = entry.upstreamModel || "-";
+    const thinking = entry.thinkingMode || "-";
+    const streamFlag = entry.stream === true ? "true" : "-";
+    const correlation = entry.correlationId;
+    console.log(`[${timestamp}] REQ_OUT ${method.padEnd(5)} ${path} | ` +
+        `status=${status} | duration=${duration} | size=${size} | ` +
+        `upstream=${upstream} | thinking=${thinking} | stream=${streamFlag} | correlation=${correlation}`);
+}
+/**
+ * Log a stream chunk to console (optional, for debugging)
+ */
+export function consoleStreamChunk(correlationId, chunkIndex) {
+    const timestamp = getTimestamp().split(" ")[1]?.split(".")[0] ?? "00:00:00";
+    console.log(`[${timestamp}] STREAM  correlation=${correlationId} | chunk=${chunkIndex}`);
+}
+/**
+ * Log an info message to console (TTY only, minified format) - DEPRECATED, kept for backward compatibility
  */
 export function consoleInfo(message, details = "") {
-    const timestamp = getTimestamp().split(" ")[1]?.split(".")[0] ?? "00:00:00"; // HH:MM:SS
+    const timestamp = getTimestamp().split(" ")[1]?.split(".")[0] ?? "00:00:00";
     const msg = message || "";
     const detail = details || "";
     console.log(`[${timestamp}] ${msg} ${detail}`);
 }
 export function consoleRequestLog(entry) {
-    const timestamp = getTimestamp().split(" ")[1]?.split(".")[0] ?? "00:00:00"; // HH:MM:SS
+    const timestamp = getTimestamp().split(" ")[1]?.split(".")[0] ?? "00:00:00";
     const method = entry.method || "-";
     const path = entry.path || "-";
     const incoming = entry.incomingModel || "-";
@@ -179,7 +294,7 @@ export function consoleRequestLog(entry) {
         `duration=${duration}`);
 }
 export function consoleResponseLog(entry) {
-    const timestamp = getTimestamp().split(" ")[1]?.split(".")[0] ?? "00:00:00"; // HH:MM:SS
+    const timestamp = getTimestamp().split(" ")[1]?.split(".")[0] ?? "00:00:00";
     const method = entry.method || "-";
     const path = entry.path || "-";
     const model = entry.model || "-";
@@ -191,16 +306,6 @@ export function consoleResponseLog(entry) {
         `status=${status} | ` +
         `size=${size} | ` +
         `duration=${duration}`);
-}
-/**
- * Format size in human-readable format
- */
-function formatSize(bytes) {
-    if (bytes < 1024)
-        return `${bytes}B`;
-    if (bytes < 1024 * 1024)
-        return `${(bytes / 1024).toFixed(1)}KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 /**
  * Log a request log entry to console (compressed format) - DEPRECATED, use consoleRequestLog instead
@@ -228,19 +333,43 @@ export function requestLog(entry) {
             message: `${entry.method} ${entry.path}`,
             details,
         });
-        // Flush immediately for request logs
         setImmediate(() => {
             flushQueue().then(resolve);
         });
     });
 }
+export async function logRequestStart(entry) {
+    await writeJsonLogEntry(entry);
+}
+export async function logRequestEnd(entry) {
+    await writeJsonLogEntry(entry);
+}
+export async function logStreamChunk(entry) {
+    await writeJsonLogEntry(entry);
+}
+/**
+ * Log an info message
+ */
+export function info(message, details = "") {
+    queueLog({ level: "INFO", message, details });
+}
+/**
+ * Log an error message
+ */
+export function error(message, details = "") {
+    queueLog({ level: "ERROR", message, details });
+}
 /**
  * Initialize the logger (create logs directory if needed)
+ * Rotates existing log file on startup with timestamp suffix
  */
 export async function initLogger() {
     try {
         await fs.mkdir(LOG_DIR, { recursive: true });
-        currentLogFile = getLogFilePath();
+        // Perform startup rotation: create a new log file with timestamp
+        // This ensures each startup gets a unique log file
+        const timestampedLogPath = getLogFilePathWithTimestamp();
+        currentLogFile = timestampedLogPath;
         lastRotationTime = Date.now();
         info("Logger initialized");
     }

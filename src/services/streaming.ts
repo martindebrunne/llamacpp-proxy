@@ -13,7 +13,7 @@ import {
 } from "../utils/sse.js";
 import { pickBestRecoveredOutput } from "../utils/reasoning.js";
 import { isNonEmptyString, isNonEmptyArray, hasUsableContent } from "../utils/typeGuards.js";
-import { error } from "../../lib/index.js";
+import { error, consoleRequestLogEnd, logRequestEnd, logStreamChunk } from "../../lib/index.js";
 
 interface StreamingState {
   assistantRoleSent: boolean;
@@ -27,6 +27,34 @@ interface StreamingState {
 interface ResponseCollection {
   text: string;
   json: unknown | null;
+}
+
+/**
+ * Log request end for streaming routes (console only)
+ */
+async function logStreamingRequestEnd(
+  req: Request,
+  mapped: unknown,
+  status: number,
+  duration: number,
+  responseBodySize: number,
+  correlationId: string
+): Promise<void> {
+  const upstreamModel = (mapped as { model?: string })?.model;
+  const thinking = (mapped as { chat_template_kwargs?: { enable_thinking?: boolean } })?.chat_template_kwargs?.enable_thinking;
+  const thinkingMode = thinking !== undefined ? String(thinking) : undefined;
+
+  consoleRequestLogEnd({
+    method: req.method,
+    path: req.originalUrl,
+    status,
+    duration,
+    size: responseBodySize,
+    upstreamModel,
+    thinkingMode,
+    stream: true,
+    correlationId,
+  });
 }
 
 /**
@@ -49,6 +77,7 @@ export async function forwardStreamingResponse(
   const decoder = new TextDecoder("utf-8");
   let rawResponseText = "";
   let sseBuffer = "";
+  let responseBodySize = 0;
 
   const state: StreamingState = {
     assistantRoleSent: false,
@@ -102,6 +131,23 @@ export async function forwardStreamingResponse(
         for (const choice of chunk.choices) {
           const delta = choice?.delta as Delta | undefined;
           const message = choice?.message;
+
+          // Log stream chunk to file (Option C - Hybrid)
+          const correlationId = (req as any).correlationId;
+          if (correlationId) {
+            // Only log chunks that have content or tool calls
+            const hasContent = delta?.content || message?.content;
+            const hasToolCalls = delta?.tool_calls || message?.tool_calls;
+            if (hasContent || hasToolCalls) {
+              logStreamChunk({
+                timestamp: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+                type: "STREAM_CHUNK",
+                correlationId,
+                chunkIndex: 0,
+                data: chunk,
+              });
+            }
+          }
 
           if (delta && typeof delta === "object") {
             if (delta.role === "assistant" && !state.assistantRoleSent) {
@@ -236,30 +282,40 @@ export async function forwardStreamingResponse(
       res.write(serializeSseEvent(usageChunk));
     }
 
+    const duration = Date.now() - startTime;
+    responseBodySize = Buffer.byteLength(rawResponseText, "utf-8");
+
+    // Log to console FIRST (synchronous)
+    const correlationId = (req as any).correlationId;
+    await logStreamingRequestEnd(req, mapped, upstream.statusCode, duration, responseBodySize, correlationId);
+
+    // Then write response
     res.write("data: [DONE]\n\n");
     res.end();
 
-    const duration = Date.now() - startTime;
+    // Then log to file (async)
+    const upstreamModel = (mapped as { model?: string })?.model;
+    const thinking = (mapped as { chat_template_kwargs?: { enable_thinking?: boolean } })?.chat_template_kwargs?.enable_thinking;
+    const thinkingMode = thinking !== undefined ? String(thinking) : undefined;
     const responseForLog: ResponseCollection = { text: rawResponseText, json: null };
     try {
       responseForLog.json = JSON.parse(rawResponseText);
     } catch {}
-
-    // Log request (deferred to avoid circular dependency)
-    const { requestLog } = await import("../../lib/index.js");
-    await requestLog({
-      method: req.method,
-      path: req.originalUrl,
-      incomingModel: (req.body as { model?: string })?.model,
-      upstreamModel: (mapped as { model?: string })?.model,
-      thinking: (mapped as { chat_template_kwargs?: { enable_thinking?: boolean } })?.chat_template_kwargs?.enable_thinking,
+    await logRequestEnd({
+      timestamp: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+      type: "REQUEST_END",
+      correlationId,
       status: upstream.statusCode,
       duration,
-      requestPayload: req.body,
+      responseSize: responseBodySize,
+      stream: true,
+      upstreamModel,
+      thinkingMode,
       responsePayload: responseForLog.json || responseForLog.text,
     });
   } catch (e) {
     const duration = Date.now() - startTime;
+    const correlationId = (req as any).correlationId;
     error("Streaming request failed", `${req.originalUrl} | ${String(e)}`);
 
     if (!res.headersSent) {
@@ -274,16 +330,16 @@ export async function forwardStreamingResponse(
     }
 
     // Log error request
-  const { requestLog } = await import("../../lib/index.js");
-    await requestLog({
-      method: req.method,
-      path: req.originalUrl,
-      incomingModel: (req.body as { model?: string })?.model,
-      upstreamModel: (mapped as { model?: string })?.model,
-      thinking: (mapped as { chat_template_kwargs?: { enable_thinking?: boolean } })?.chat_template_kwargs?.enable_thinking,
+    await logRequestEnd({
+      timestamp: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+      type: "REQUEST_END",
+      correlationId,
       status: 500,
       duration,
-      requestPayload: req.body,
+      responseSize: Buffer.byteLength(rawResponseText, "utf-8"),
+      stream: true,
+      upstreamModel: (mapped as { model?: string })?.model,
+      thinkingMode: undefined,
       responsePayload: { text: rawResponseText, json: null },
     });
   } finally {

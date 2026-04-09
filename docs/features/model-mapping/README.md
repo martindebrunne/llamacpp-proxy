@@ -1,7 +1,7 @@
 # Model Mapping Feature
 
 ## Purpose
-Transform logical model names (`*-Think`, `*-No-Think`) into upstream-compatible requests with `enable_thinking` flag. **Dynamic model detection** extracts the real model name from incoming requests.
+Transform logical model names for thinking mode control. `*-Think` requests are rewritten to upstream-compatible requests with `enable_thinking`; `*-No-Think` and unsuffixed requests are passed through unchanged.
 
 ## Scope
 - Intercept model names from client requests
@@ -97,7 +97,7 @@ The proxy automatically detects the real model name from any incoming request:
 |----------------|----------------|
 | `Qwen3.5-35B-A3B-T-Think` | `Qwen3.5-35B-A3B-T` |
 | `Llama3-70B-Think` | `Llama3-70B` |
-| `MyCustomModel-No-Think` | `MyCustomModel` |
+| `MyCustomModel-No-Think` | `MyCustomModel-No-Think` |
 
 This makes the proxy **compatible with any model** served by llama.cpp.
 

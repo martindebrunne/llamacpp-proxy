@@ -8,7 +8,8 @@ import { config } from "../config/index.js";
 import { mapRequest, isNoThinkMode } from "./modelMapper.js";
 import { forwardStreamingResponse } from "./streaming.js";
 import { sanitizeJsonText } from "./responseSanitizer.js";
-import { error } from "../../lib/index.js";
+import { error, consoleRequestLogEnd } from "../../lib/index.js";
+import { logRequestEnd } from "../../lib/logger.js";
 
 interface ResponseCollection {
   text: string;
@@ -47,6 +48,34 @@ async function collectResponse(upstream: Response): Promise<ResponseCollection |
 }
 
 /**
+ * Log request end for intercepted routes (console only)
+ */
+async function logInterceptedRequestEnd(
+  req: Request,
+  mapped: unknown,
+  status: number,
+  duration: number,
+  responseBodySize: number,
+  correlationId: string
+): Promise<void> {
+  const upstreamModel = (mapped as { model?: string })?.model;
+  const thinking = (mapped as { chat_template_kwargs?: { enable_thinking?: boolean } })?.chat_template_kwargs?.enable_thinking;
+  const thinkingMode = thinking !== undefined ? String(thinking) : undefined;
+
+  consoleRequestLogEnd({
+    method: req.method,
+    path: req.originalUrl || req.url,
+    status,
+    duration,
+    size: responseBodySize,
+    upstreamModel,
+    thinkingMode,
+    stream: false,
+    correlationId,
+  });
+}
+
+/**
  * Forward JSON POST request
  */
 export async function forwardJsonPost(
@@ -77,7 +106,13 @@ export async function forwardJsonPost(
     if (!upstream.body) {
       res.end();
       const duration = Date.now() - startTime;
-      await logRequest(req, upstreamPath, startTime, mapped, upstream.status, duration, response);
+      const correlationId = (req as any).correlationId;
+      if (correlationId) {
+        const upstreamModel = (mapped as { model?: string })?.model;
+        const thinking = (mapped as { chat_template_kwargs?: { enable_thinking?: boolean } })?.chat_template_kwargs?.enable_thinking;
+        const thinkingMode = thinking !== undefined ? String(thinking) : undefined;
+        await writeRequestEndToLog(correlationId, upstream.status, duration, response, upstreamModel, thinkingMode);
+      }
       return;
     }
 
@@ -88,19 +123,35 @@ export async function forwardJsonPost(
       return await forwardStreamingResponse(req, res, upstream as unknown as Response & { body?: ReadableStream }, mapped, upstreamPath, startTime);
     }
 
-    response = await collectResponse(upstream as unknown as Response & { body?: ReadableStream });
+    response = await collectResponse(upstream as unknown as Response & { body?: ReadableStream<Uint8Array> });
 
+    let responseBodySize = 0;
+    let sanitizedText = "";
     if (response?.text) {
-      const sanitizedText = sanitizeJsonText(response.text, req.body?.model);
-      res.write(Buffer.from(sanitizedText, "utf-8"));
+      sanitizedText = sanitizeJsonText(response.text, req.body?.model);
+      responseBodySize = Buffer.byteLength(sanitizedText, "utf-8");
     }
 
-    res.end();
-
     const duration = Date.now() - startTime;
-    await logRequest(req, upstreamPath, startTime, mapped, upstream.status, duration, response);
+    const correlationId = (req as any).correlationId;
+    
+    // Log to console FIRST (synchronous)
+    await logInterceptedRequestEnd(req, mapped, upstream.status, duration, responseBodySize, correlationId);
+    
+    // Then write response
+    if (response?.text) {
+      res.write(Buffer.from(sanitizedText, "utf-8"));
+    }
+    res.end();
+    
+    // Then log to file (async)
+    const upstreamModel = (mapped as { model?: string })?.model;
+    const thinking = (mapped as { chat_template_kwargs?: { enable_thinking?: boolean } })?.chat_template_kwargs?.enable_thinking;
+    const thinkingMode = thinking !== undefined ? String(thinking) : undefined;
+    await writeRequestEndToLog(correlationId, upstream.status, duration, response, upstreamModel, thinkingMode);
   } catch (e) {
     const duration = Date.now() - startTime;
+    const correlationId = (req as any).correlationId;
     error("Request failed", `${req.originalUrl} | ${String(e)}`);
 
     res.status(500).json({
@@ -108,22 +159,31 @@ export async function forwardJsonPost(
       message: String(e),
     });
 
-    await logRequest(req, upstreamPath, startTime, null, 500, duration, response);
+    await writeRequestEndToLog(correlationId, 500, duration, response, undefined, undefined);
   }
 }
 
 /**
- * Log request with timing and payloads
+ * Log request end with timing and payloads to file
  */
-async function logRequest(
-  _req: Request,
-  _upstreamPath: string,
-  _startTime: number,
-  _mapped: unknown,
-  _status: number,
-  _duration: number,
-  _response: ResponseCollection | null
+async function writeRequestEndToLog(
+  correlationId: string,
+  status: number,
+  duration: number,
+  response: ResponseCollection | null,
+  upstreamModel: string | undefined,
+  thinkingMode: string | undefined
 ): Promise<void> {
-  // Logging is handled by middleware for passthrough requests
-  // This function is kept for potential future use
+  await logRequestEnd({
+    timestamp: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+    type: "REQUEST_END",
+    correlationId,
+    status,
+    duration,
+    responseSize: response?.text ? Buffer.byteLength(response.text, "utf-8") : 0,
+    stream: false,
+    upstreamModel,
+    thinkingMode,
+    responsePayload: response?.json ?? response?.text ?? null,
+  });
 }
