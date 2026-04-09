@@ -1,21 +1,31 @@
+/**
+ * Logger module for the proxy application
+ * Handles structured logging to files and console
+ */
+
 import { promises as fs } from "fs";
 import { join } from "path";
 
 const LOG_DIR = join(process.cwd(), "logs");
 const LOG_FILE_PREFIX = "proxy-";
-const LOG_DATE_FORMAT = "%Y-%m-%d";
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
 const LOG_ROTATION_INTERVAL = 86400000; // 24 hours in ms
 
-let currentLogFile = null;
+let currentLogFile: string | null = null;
 let lastRotationTime = Date.now();
-let logQueue = [];
+let logQueue: LogEntry[] = [];
 let isFlushing = false;
+
+interface LogEntry {
+  level: string;
+  message: string;
+  details: string;
+}
 
 /**
  * Get current date string for log filename
  */
-function getDateString() {
+function getDateString(): string {
   const now = new Date();
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, "0");
@@ -26,7 +36,7 @@ function getDateString() {
 /**
  * Get current timestamp string
  */
-function getTimestamp() {
+function getTimestamp(): string {
   const now = new Date();
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, "0");
@@ -41,7 +51,7 @@ function getTimestamp() {
 /**
  * Get log file path for current date
  */
-function getLogFilePath() {
+function getLogFilePath(): string {
   const date = getDateString();
   return join(LOG_DIR, `${LOG_FILE_PREFIX}${date}.log`);
 }
@@ -49,7 +59,7 @@ function getLogFilePath() {
 /**
  * Rotate log file if needed (size or time based)
  */
-async function rotateIfNeeded() {
+async function rotateIfNeeded(): Promise<void> {
   const now = Date.now();
   
   // Check time-based rotation
@@ -65,7 +75,7 @@ async function rotateIfNeeded() {
       if (stats.size > MAX_LOG_SIZE) {
         currentLogFile = null;
       }
-    } catch (e) {
+    } catch {
       // File doesn't exist yet, that's fine
     }
   }
@@ -78,7 +88,7 @@ async function rotateIfNeeded() {
 /**
  * Format log entry as human-readable string
  */
-function formatLogEntry(entry) {
+function formatLogEntry(entry: LogEntry): string {
   const timestamp = getTimestamp();
   const level = entry.level || "INFO";
   const message = entry.message || "";
@@ -95,23 +105,23 @@ function formatLogEntry(entry) {
 /**
  * Write a single log entry to file
  */
-async function writeLogEntry(entry) {
+async function writeLogEntry(entry: LogEntry): Promise<void> {
   await rotateIfNeeded();
   
   const formatted = formatLogEntry(entry);
   const line = formatted + "\n";
   
   try {
-    await fs.appendFile(currentLogFile, line);
+    await fs.appendFile(currentLogFile!, line);
   } catch (e) {
-    console.error(`Logger write error:`, e);
+    console.error("Logger write error:", e);
   }
 }
 
 /**
  * Flush the log queue
  */
-async function flushQueue() {
+async function flushQueue(): Promise<void> {
   if (isFlushing || logQueue.length === 0) return;
   
   isFlushing = true;
@@ -132,7 +142,7 @@ async function flushQueue() {
 /**
  * Add entry to queue and flush periodically
  */
-function queueLog(entry) {
+function queueLog(entry: LogEntry): void {
   logQueue.push(entry);
   
   // Flush every 10 entries or after a short delay
@@ -146,34 +156,21 @@ function queueLog(entry) {
 /**
  * Log an info message
  */
-export function info(message, details = "") {
+export function info(message: string, details: string = ""): void {
   queueLog({ level: "INFO", message, details });
 }
 
 /**
  * Log an error message
  */
-export function error(message, details = "") {
+export function error(message: string, details: string = ""): void {
   queueLog({ level: "ERROR", message, details });
-}
-
-/**
- * Check if data is JSON-serializable and readable
- */
-function isReadableJSON(data) {
-  if (!data || typeof data !== 'object') return false;
-  try {
-    JSON.stringify(data);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /**
  * Format payload for logging (no truncation for file logs)
  */
-function formatPayload(payload) {
+function formatPayload(payload: unknown): string {
   if (!payload) return '';
   
   try {
@@ -184,32 +181,37 @@ function formatPayload(payload) {
 }
 
 /**
- * Format thinking status for display
+ * Log an info message to console (TTY only, minified format)
  */
-function formatThinking(thinking) {
-  if (thinking === undefined || thinking === null) return "-";
-  return thinking ? "✓" : "✗";
+export function consoleInfo(message: string, details: string = ""): void {
+  const timestamp = getTimestamp().split(" ")[1]?.split(".")[0] ?? "00:00:00"; // HH:MM:SS
+  const msg = message || "";
+  const detail = details || "";
+  
+  console.log(`[${timestamp}] ${msg} ${detail}`);
 }
 
 /**
- * Format status with indicator
+ * Log a request log entry to console (TTY only, minified format)
  */
-function formatStatus(status) {
-  if (!status) return "-";
-  return status === 200 ? `✓${status}` : `✗${status}`;
+export interface RequestLogConsoleEntry {
+  method: string;
+  path: string;
+  incomingModel: string | undefined;
+  upstreamModel: string | undefined;
+  thinking: boolean | undefined;
+  status: number;
+  duration: number;
 }
 
-/**
- * Log a request log entry to console (compressed format)
- */
-export function requestLogConsole(entry) {
-  const timestamp = getTimestamp().split(" ")[1].split(".")[0]; // HH:MM:SS
+export function consoleRequestLog(entry: RequestLogConsoleEntry): void {
+  const timestamp = getTimestamp().split(" ")[1]?.split(".")[0] ?? "00:00:00"; // HH:MM:SS
   const method = entry.method || "-";
   const path = entry.path || "-";
   const incoming = entry.incomingModel || "-";
   const upstream = entry.upstreamModel || "-";
-  const thinking = formatThinking(entry.thinking);
-  const status = formatStatus(entry.status);
+  const thinking = entry.thinking === true ? "true" : entry.thinking === false ? "false" : "-";
+  const status = entry.status || "-";
   const duration = entry.duration ? `${entry.duration}ms` : "-";
 
   console.log(
@@ -222,9 +224,67 @@ export function requestLogConsole(entry) {
 }
 
 /**
+ * Log a response log entry to console (TTY only, minified format)
+ */
+export interface ResponseLogConsoleEntry {
+  method: string;
+  path: string;
+  model: string | undefined;
+  status: number;
+  size: number;
+  duration: number;
+}
+
+export function consoleResponseLog(entry: ResponseLogConsoleEntry): void {
+  const timestamp = getTimestamp().split(" ")[1]?.split(".")[0] ?? "00:00:00"; // HH:MM:SS
+  const method = entry.method || "-";
+  const path = entry.path || "-";
+  const model = entry.model || "-";
+  const status = entry.status || "-";
+  const size = formatSize(entry.size);
+  const duration = entry.duration ? `${entry.duration}ms` : "-";
+
+  console.log(
+    `[${timestamp}] RESP  ${method.padEnd(5)} ${path} | ` +
+    `model=${model} | ` +
+    `status=${status} | ` +
+    `size=${size} | ` +
+    `duration=${duration}`
+  );
+}
+
+/**
+ * Format size in human-readable format
+ */
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+/**
+ * Log a request log entry to console (compressed format) - DEPRECATED, use consoleRequestLog instead
+ */
+export function requestLogConsole(entry: RequestLogConsoleEntry): void {
+  consoleRequestLog(entry);
+}
+
+/**
  * Log a request log entry to file (full format with payloads)
  */
-export function requestLog(entry) {
+export interface RequestLogEntry {
+  method: string;
+  path: string;
+  incomingModel: string | undefined;
+  upstreamModel: string | undefined;
+  thinking: boolean | undefined;
+  status: number;
+  duration: number;
+  requestPayload: unknown;
+  responsePayload: unknown;
+}
+
+export function requestLog(entry: RequestLogEntry): Promise<void> {
   const details = [
     entry.method && `method=${entry.method}`,
     entry.path && `path=${entry.path}`,
@@ -239,17 +299,23 @@ export function requestLog(entry) {
     .filter(Boolean)
     .join(" | ");
   
-  queueLog({
-    level: "REQUEST",
-    message: `${entry.method} ${entry.path}`,
-    details,
+  return new Promise((resolve) => {
+    queueLog({
+      level: "REQUEST",
+      message: `${entry.method} ${entry.path}`,
+      details,
+    });
+    // Flush immediately for request logs
+    setImmediate(() => {
+      flushQueue().then(resolve);
+    });
   });
 }
 
 /**
  * Initialize the logger (create logs directory if needed)
  */
-export async function initLogger() {
+export async function initLogger(): Promise<void> {
   try {
     await fs.mkdir(LOG_DIR, { recursive: true });
     currentLogFile = getLogFilePath();
@@ -263,7 +329,7 @@ export async function initLogger() {
 /**
  * Flush all pending logs (for graceful shutdown)
  */
-export async function flushLogs() {
+export async function flushLogs(): Promise<void> {
   await flushQueue();
 }
 
