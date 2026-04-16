@@ -38,6 +38,13 @@ vi.mock('../../src/services/streaming.js', () => ({
       usage: { total_tokens: 10, prompt_tokens: 5, completion_tokens: 5 },
     });
   }),
+  forwardRawStreamingResponse: vi.fn().mockImplementation(async (req, res, upstream) => {
+    res.status(200).json({
+      id: 'test-123',
+      choices: [{ finish_reason: 'stop', index: 0, message: { role: 'assistant', content: 'test response' } }],
+      usage: { total_tokens: 10, prompt_tokens: 5, completion_tokens: 5 },
+    });
+  }),
 }));
 
 // Mock the config - match actual exports

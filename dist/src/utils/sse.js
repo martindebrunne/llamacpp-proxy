@@ -34,7 +34,7 @@ export function serializeSseEvent(json) {
 /**
  * Create an SSE chunk from template
  */
-export function createSseChunkFromTemplate(baseChunk, choice, delta, model) {
+export function createSseChunkFromTemplate(baseChunk, choice, delta, model, finishReason = null) {
     return {
         id: baseChunk?.id ?? "proxy-stream",
         object: baseChunk?.object ?? "chat.completion.chunk",
@@ -44,7 +44,7 @@ export function createSseChunkFromTemplate(baseChunk, choice, delta, model) {
             {
                 index: choice?.index ?? 0,
                 delta: delta ?? {},
-                finish_reason: null,
+                finish_reason: finishReason,
             },
         ],
     };

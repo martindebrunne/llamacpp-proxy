@@ -12,6 +12,11 @@ info:
     - No suffix - Passthrough mode (e.g., `MyModel`)
     
     The proxy automatically extracts the real model name from incoming requests.
+    
+    Streaming compatibility notes:
+    - Think mode preserves OpenAI-compatible `tool_calls` and `finish_reason` semantics.
+    - No-Think mode forwards upstream SSE chunks unchanged.
+    - Terminal `data: [DONE]` is preserved.
   version: 1.0.12
 servers:
   - url: http://127.0.0.1:4000
@@ -42,6 +47,15 @@ paths:
             text/event-stream:
               schema:
                 type: string
+              examples:
+                tool_call_stream:
+                  summary: SSE stream preserving tool-calling semantics
+                  value: |
+                    data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1234567890,"model":"MyModel","choices":[{"index":0,"delta":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"my_tool","arguments":"{}"}}]},"finish_reason":null}]}
+
+                    data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1234567890,"model":"MyModel","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+                    data: [DONE]
         '500':
           description: Proxy error
           content:
@@ -68,6 +82,15 @@ paths:
             text/event-stream:
               schema:
                 type: string
+              examples:
+                tool_call_stream:
+                  summary: SSE stream preserving tool-calling semantics
+                  value: |
+                    data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1234567890,"model":"MyModel","choices":[{"index":0,"delta":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"my_tool","arguments":"{}"}}]},"finish_reason":null}]}
+
+                    data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1234567890,"model":"MyModel","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+                    data: [DONE]
         '500':
           description: Proxy error
           content:
@@ -172,6 +195,9 @@ components:
           description: List of chat messages
           items:
             $ref: '#/components/schemas/Message'
+        stream:
+          type: boolean
+          description: Enable SSE streaming response
         chat_template_kwargs:
           type: object
           description: Additional template parameters passed to llama.cpp
@@ -198,7 +224,6 @@ components:
       type: object
       required:
         - role
-        - content
       properties:
         role:
           type: string
@@ -209,7 +234,40 @@ components:
           description: Message role
         content:
           type: string
+          nullable: true
           description: Message content
+        tool_calls:
+          type: array
+          items:
+            $ref: '#/components/schemas/ToolCall'
+          description: Tool calls emitted by assistant messages/chunks
+
+    ToolCall:
+      type: object
+      required:
+        - id
+        - type
+        - function
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum:
+            - function
+        function:
+          $ref: '#/components/schemas/FunctionCall'
+
+    FunctionCall:
+      type: object
+      required:
+        - name
+        - arguments
+      properties:
+        name:
+          type: string
+        arguments:
+          type: string
 
     Model:
       type: object

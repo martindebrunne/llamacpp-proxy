@@ -3,24 +3,40 @@
  * Handles JSON POST requests and response sanitization
  */
 
-import type { Request, Response } from "express";
+import type { Request, Response as ExpressResponse } from "express";
 import { config } from "../config/index.js";
 import { mapRequest, isNoThinkMode } from "./modelMapper.js";
-import { forwardStreamingResponse } from "./streaming.js";
+import { forwardStreamingResponse, forwardRawStreamingResponse } from "./streaming.js";
 import { sanitizeJsonText } from "./responseSanitizer.js";
 import { error, consoleRequestLogEnd } from "../../lib/index.js";
 import { logRequestEnd } from "../../lib/logger.js";
+import { setRequestBodyForLogging, updateStreamingState } from "../middleware/logging.js";
 
 interface ResponseCollection {
   text: string;
   json: unknown | null;
 }
 
+function isAbortError(value: unknown): boolean {
+  return value instanceof Error && value.name === "AbortError";
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<globalThis.Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /**
  * Collect response from upstream
  */
-async function collectResponse(upstream: Response): Promise<ResponseCollection | null> {
-  const body = (upstream as Response & { body?: ReadableStream }).body;
+async function collectResponse(upstream: globalThis.Response): Promise<ResponseCollection | null> {
+  const body = upstream.body;
   if (!body) return null;
 
   const chunks: Buffer[] = [];
@@ -80,16 +96,18 @@ async function logInterceptedRequestEnd(
  */
 export async function forwardJsonPost(
   req: Request,
-  res: Response,
+  res: ExpressResponse,
   upstreamPath: string
 ): Promise<void> {
   const startTime = Date.now();
   let response: ResponseCollection | null = null;
+  res.setTimeout(config.PROXY_TIMEOUT_MS);
 
   try {
     const mapped = mapRequest(req.body);
+    setRequestBodyForLogging(req, mapped);
 
-    const upstream = await fetch(`${config.LLAMA_ORIGIN}${upstreamPath}`, {
+    const upstream = await fetchWithTimeout(`${config.LLAMA_ORIGIN}${upstreamPath}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -98,19 +116,24 @@ export async function forwardJsonPost(
           : {}),
       },
       body: JSON.stringify(mapped),
-    });
+    }, config.UPSTREAM_FETCH_TIMEOUT_MS);
 
     const contentType = upstream.headers.get("content-type");
     if (contentType) res.setHeader("Content-Type", contentType);
+    res.status(upstream.status);
 
     if (!upstream.body) {
-      res.end();
       const duration = Date.now() - startTime;
       const correlationId = (req as any).correlationId;
+      const upstreamModel = (mapped as { model?: string })?.model;
+      const thinking = (mapped as { chat_template_kwargs?: { enable_thinking?: boolean } })?.chat_template_kwargs?.enable_thinking;
+      const thinkingMode = thinking !== undefined ? String(thinking) : undefined;
+
+      (req as any).requestEndLoggedByService = true;
+      await logInterceptedRequestEnd(req, mapped, upstream.status, duration, 0, correlationId);
+      res.end();
+
       if (correlationId) {
-        const upstreamModel = (mapped as { model?: string })?.model;
-        const thinking = (mapped as { chat_template_kwargs?: { enable_thinking?: boolean } })?.chat_template_kwargs?.enable_thinking;
-        const thinkingMode = thinking !== undefined ? String(thinking) : undefined;
         await writeRequestEndToLog(correlationId, upstream.status, duration, response, upstreamModel, thinkingMode);
       }
       return;
@@ -119,11 +142,17 @@ export async function forwardJsonPost(
     const isNoThink = isNoThinkMode(req.body?.model);
     const isEventStream = (contentType || "").toLowerCase().includes("text/event-stream");
 
-    if (isEventStream && !isNoThink) {
-      return await forwardStreamingResponse(req, res, upstream as unknown as Response & { body?: ReadableStream }, mapped, upstreamPath, startTime);
+    if (isEventStream) {
+      updateStreamingState(req, true, (mapped as { model?: string })?.model);
+
+      if (isNoThink) {
+        return await forwardRawStreamingResponse(req, res, upstream, mapped, upstreamPath, startTime);
+      }
+
+      return await forwardStreamingResponse(req, res, upstream, mapped, upstreamPath, startTime);
     }
 
-    response = await collectResponse(upstream as unknown as Response & { body?: ReadableStream<Uint8Array> });
+    response = await collectResponse(upstream);
 
     let responseBodySize = 0;
     let sanitizedText = "";
@@ -136,6 +165,7 @@ export async function forwardJsonPost(
     const correlationId = (req as any).correlationId;
     
     // Log to console FIRST (synchronous)
+    (req as any).requestEndLoggedByService = true;
     await logInterceptedRequestEnd(req, mapped, upstream.status, duration, responseBodySize, correlationId);
     
     // Then write response
@@ -152,14 +182,21 @@ export async function forwardJsonPost(
   } catch (e) {
     const duration = Date.now() - startTime;
     const correlationId = (req as any).correlationId;
+    const status = isAbortError(e) ? 504 : 500;
+    const message = isAbortError(e)
+      ? `Upstream request timed out after ${config.UPSTREAM_FETCH_TIMEOUT_MS}ms`
+      : String(e);
     error("Request failed", `${req.originalUrl} | ${String(e)}`);
 
-    res.status(500).json({
+    (req as any).requestEndLoggedByService = true;
+    await logInterceptedRequestEnd(req, null, status, duration, 0, correlationId);
+
+    res.status(status).json({
       error: "proxy_error",
-      message: String(e),
+      message,
     });
 
-    await writeRequestEndToLog(correlationId, 500, duration, response, undefined, undefined);
+    await writeRequestEndToLog(correlationId, status, duration, response, undefined, undefined);
   }
 }
 

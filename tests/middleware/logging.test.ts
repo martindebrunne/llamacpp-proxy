@@ -218,6 +218,21 @@ describe('Logging Middleware', () => {
       const callArgs = logRequestStart.mock.calls[0][0];
       expect(callArgs.requestPayload).toEqual({ model: 'test-model', messages: [{ role: 'user', content: 'hello' }] });
     });
+
+    it('should expose correlationId on req for downstream services', async () => {
+      const { loggingMiddleware } = await import('../../src/middleware/logging.js');
+
+      app.use(loggingMiddleware);
+      app.get('/correlation-id', (req, res) => {
+        res.json({ correlationId: (req as any).correlationId });
+      });
+
+      const response = await request(app).get('/correlation-id');
+
+      expect(response.status).toBe(200);
+      expect(typeof response.body.correlationId).toBe('string');
+      expect(response.body.correlationId.length).toBeGreaterThan(0);
+    });
   });
 
   describe('extractThinkingMode', () => {

@@ -46,7 +46,8 @@ export function createSseChunkFromTemplate(
   baseChunk: Partial<ChatCompletionChunk> | undefined,
   choice: Partial<Choice> | undefined,
   delta: Partial<Delta> | undefined,
-  model: string | undefined
+  model: string | undefined,
+  finishReason: string | null = null
 ): ChatCompletionChunk {
   return {
     id: baseChunk?.id ?? "proxy-stream",
@@ -57,7 +58,7 @@ export function createSseChunkFromTemplate(
       {
         index: choice?.index ?? 0,
         delta: delta ?? {},
-        finish_reason: null,
+        finish_reason: finishReason,
       },
     ],
   };

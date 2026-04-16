@@ -8,6 +8,9 @@ const requestState = new WeakMap();
 export function loggingMiddleware(req, res, next) {
     const startTime = Date.now();
     const correlationId = generateCorrelationId();
+    // Expose correlation ID to downstream services (proxy/streaming)
+    // that emit request-end and stream logs.
+    req.correlationId = correlationId;
     // Extract model and thinking mode from request
     const incomingModel = req.body?.model;
     const thinkingMode = extractThinkingMode(req.body);
@@ -51,18 +54,21 @@ export function loggingMiddleware(req, res, next) {
         // Get stored state
         const state = requestState.get(req);
         if (state) {
-            // Log request end to console
-            consoleRequestLogEnd({
-                method: req.method,
-                path: req.originalUrl || req.url,
-                status: res.statusCode,
-                duration,
-                size: responseBodySize,
-                upstreamModel: undefined, // Will be set by proxy services
-                thinkingMode: state.thinkingMode,
-                stream: false, // Will be set by proxy/streaming services
-                correlationId: state.correlationId,
-            });
+            const requestEndLoggedByService = req.requestEndLoggedByService === true;
+            if (!requestEndLoggedByService) {
+                // Log request end to console
+                consoleRequestLogEnd({
+                    method: req.method,
+                    path: req.originalUrl || req.url,
+                    status: res.statusCode,
+                    duration,
+                    size: responseBodySize,
+                    upstreamModel: undefined, // Will be set by proxy services
+                    thinkingMode: state.thinkingMode,
+                    stream: false, // Will be set by proxy/streaming services
+                    correlationId: state.correlationId,
+                });
+            }
             // Note: File logging for request end is handled by proxy/streaming services
             // to include upstream model and full response payload
         }

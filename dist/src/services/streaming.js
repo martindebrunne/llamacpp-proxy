@@ -29,6 +29,7 @@ async function logStreamingRequestEnd(req, mapped, status, duration, responseBod
  * Forward streaming response with real-time processing
  */
 export async function forwardStreamingResponse(req, res, upstream, mapped, _upstreamPath, startTime) {
+    res.setTimeout(0);
     const body = upstream.body;
     if (!body) {
         res.end();
@@ -83,6 +84,7 @@ export async function forwardStreamingResponse(req, res, upstream, mapped, _upst
                 for (const choice of chunk.choices) {
                     const delta = choice?.delta;
                     const message = choice?.message;
+                    const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
                     // Log stream chunk to file (Option C - Hybrid)
                     const correlationId = req.correlationId;
                     if (correlationId) {
@@ -101,15 +103,15 @@ export async function forwardStreamingResponse(req, res, upstream, mapped, _upst
                     }
                     if (delta && typeof delta === "object") {
                         if (delta.role === "assistant" && !state.assistantRoleSent) {
-                            res.write(serializeSseEvent(createSseChunkFromTemplate(chunk, choice, { role: "assistant" }, mapped?.model)));
+                            res.write(serializeSseEvent(createSseChunkFromTemplate(chunk, choice, { role: "assistant" }, mapped?.model, null)));
                             state.assistantRoleSent = true;
                         }
                         if (hasUsableContent(delta.content)) {
-                            res.write(serializeSseEvent(createSseChunkFromTemplate(chunk, choice, { content: delta.content }, mapped?.model)));
+                            res.write(serializeSseEvent(createSseChunkFromTemplate(chunk, choice, { content: delta.content }, mapped?.model, null)));
                             state.sawUsefulContent = true;
                         }
                         if (isNonEmptyArray(delta.tool_calls)) {
-                            res.write(serializeSseEvent(createSseChunkFromTemplate(chunk, choice, { tool_calls: delta.tool_calls }, mapped?.model)));
+                            res.write(serializeSseEvent(createSseChunkFromTemplate(chunk, choice, { tool_calls: delta.tool_calls }, mapped?.model, null)));
                             state.sawToolCalls = true;
                         }
                         if (isNonEmptyString(delta.reasoning_content)) {
@@ -121,15 +123,15 @@ export async function forwardStreamingResponse(req, res, upstream, mapped, _upst
                     }
                     else if (message && typeof message === "object") {
                         if (!state.assistantRoleSent) {
-                            res.write(serializeSseEvent(createSseChunkFromTemplate(chunk, choice, { role: "assistant" }, mapped?.model)));
+                            res.write(serializeSseEvent(createSseChunkFromTemplate(chunk, choice, { role: "assistant" }, mapped?.model, null)));
                             state.assistantRoleSent = true;
                         }
                         if (hasUsableContent(message.content)) {
-                            res.write(serializeSseEvent(createSseChunkFromTemplate(chunk, choice, { content: message.content }, mapped?.model)));
+                            res.write(serializeSseEvent(createSseChunkFromTemplate(chunk, choice, { content: message.content }, mapped?.model, null)));
                             state.sawUsefulContent = true;
                         }
                         if (isNonEmptyArray(message.tool_calls)) {
-                            res.write(serializeSseEvent(createSseChunkFromTemplate(chunk, choice, { tool_calls: message.tool_calls }, mapped?.model)));
+                            res.write(serializeSseEvent(createSseChunkFromTemplate(chunk, choice, { tool_calls: message.tool_calls }, mapped?.model, null)));
                             state.sawToolCalls = true;
                         }
                         if (isNonEmptyString(message.reasoning_content)) {
@@ -138,6 +140,9 @@ export async function forwardStreamingResponse(req, res, upstream, mapped, _upst
                         else if (isNonEmptyString(message.reasoning)) {
                             state.accumulatedReasoning += message.reasoning;
                         }
+                    }
+                    if (finishReason !== null) {
+                        res.write(serializeSseEvent(createSseChunkFromTemplate(chunk, choice, {}, mapped?.model, finishReason)));
                     }
                 }
             }
@@ -182,7 +187,8 @@ export async function forwardStreamingResponse(req, res, upstream, mapped, _upst
         responseBodySize = Buffer.byteLength(rawResponseText, "utf-8");
         // Log to console FIRST (synchronous)
         const correlationId = req.correlationId;
-        await logStreamingRequestEnd(req, mapped, upstream.statusCode, duration, responseBodySize, correlationId);
+        req.requestEndLoggedByService = true;
+        await logStreamingRequestEnd(req, mapped, upstream.status, duration, responseBodySize, correlationId);
         // Then write response
         res.write("data: [DONE]\n\n");
         res.end();
@@ -199,7 +205,7 @@ export async function forwardStreamingResponse(req, res, upstream, mapped, _upst
             timestamp: new Date().toISOString().replace('T', ' ').replace('Z', ''),
             type: "REQUEST_END",
             correlationId,
-            status: upstream.statusCode,
+            status: upstream.status,
             duration,
             responseSize: responseBodySize,
             stream: true,
@@ -211,6 +217,7 @@ export async function forwardStreamingResponse(req, res, upstream, mapped, _upst
     catch (e) {
         const duration = Date.now() - startTime;
         const correlationId = req.correlationId;
+        req.requestEndLoggedByService = true;
         error("Streaming request failed", `${req.originalUrl} | ${String(e)}`);
         if (!res.headersSent) {
             res.status(500).json({
@@ -236,6 +243,103 @@ export async function forwardStreamingResponse(req, res, upstream, mapped, _upst
             upstreamModel: mapped?.model,
             thinkingMode: undefined,
             responsePayload: { text: rawResponseText, json: null },
+        });
+    }
+    finally {
+        try {
+            reader.releaseLock();
+        }
+        catch { }
+    }
+}
+/**
+ * Forward streaming response without transformation (No-Think passthrough)
+ */
+export async function forwardRawStreamingResponse(req, res, upstream, mapped, _upstreamPath, startTime) {
+    res.setTimeout(0);
+    const body = upstream.body;
+    if (!body) {
+        const duration = Date.now() - startTime;
+        const correlationId = req.correlationId;
+        req.requestEndLoggedByService = true;
+        await logStreamingRequestEnd(req, mapped, upstream.status, duration, 0, correlationId);
+        res.end();
+        await logRequestEnd({
+            timestamp: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+            type: "REQUEST_END",
+            correlationId,
+            status: upstream.status,
+            duration,
+            responseSize: 0,
+            stream: true,
+            upstreamModel: mapped?.model,
+            thinkingMode: undefined,
+            responsePayload: null,
+        });
+        return;
+    }
+    const reader = body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let rawResponseText = "";
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done)
+                break;
+            rawResponseText += decoder.decode(value, { stream: true });
+            res.write(Buffer.from(value));
+        }
+        const trailing = decoder.decode();
+        if (trailing) {
+            rawResponseText += trailing;
+        }
+        const duration = Date.now() - startTime;
+        const responseBodySize = Buffer.byteLength(rawResponseText, "utf-8");
+        const correlationId = req.correlationId;
+        req.requestEndLoggedByService = true;
+        await logStreamingRequestEnd(req, mapped, upstream.status, duration, responseBodySize, correlationId);
+        res.end();
+        await logRequestEnd({
+            timestamp: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+            type: "REQUEST_END",
+            correlationId,
+            status: upstream.status,
+            duration,
+            responseSize: responseBodySize,
+            stream: true,
+            upstreamModel: mapped?.model,
+            thinkingMode: undefined,
+            responsePayload: rawResponseText,
+        });
+    }
+    catch (e) {
+        const duration = Date.now() - startTime;
+        const correlationId = req.correlationId;
+        req.requestEndLoggedByService = true;
+        error("Raw streaming request failed", `${req.originalUrl} | ${String(e)}`);
+        if (!res.headersSent) {
+            res.status(500).json({
+                error: "proxy_error",
+                message: String(e),
+            });
+        }
+        else {
+            try {
+                res.end();
+            }
+            catch { }
+        }
+        await logRequestEnd({
+            timestamp: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+            type: "REQUEST_END",
+            correlationId,
+            status: 500,
+            duration,
+            responseSize: Buffer.byteLength(rawResponseText, "utf-8"),
+            stream: true,
+            upstreamModel: mapped?.model,
+            thinkingMode: undefined,
+            responsePayload: rawResponseText,
         });
     }
     finally {

@@ -11,16 +11,39 @@ const LOG_FILE_PREFIX = "proxy-";
 const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB
 const LOG_ROTATION_INTERVAL = 86400000; // 24 hours in ms
 const MAX_ROTATION_SUFFIX = 3; // Maximum rotation suffix (_1, _2, _3)
+const SENSITIVE_KEY_PATTERN = /authorization|api[-_]?key|token|secret|password|passwd|jwt/i;
+const REDACTED_VALUE = "[REDACTED]";
+const TOKEN_METRIC_KEYS = new Set(["prompt_tokens", "completion_tokens", "total_tokens", "max_tokens"]);
 
 let currentLogFile: string | null = null;
 let lastRotationTime = Date.now();
 let logQueue: LogEntry[] = [];
 let isFlushing = false;
+let fileWriteChain: Promise<void> = Promise.resolve();
 
 interface LogEntry {
   level: string;
   message: string;
   details: string;
+}
+
+interface NodeErrorLike {
+  code?: string;
+}
+
+function isNodeErrorLike(value: unknown): value is NodeErrorLike {
+  return !!value && typeof value === "object";
+}
+
+/**
+ * Run file writes sequentially to avoid concurrent rotation/write races
+ */
+async function enqueueFileWrite(task: () => Promise<void>): Promise<void> {
+  const next = fileWriteChain.then(task, task);
+  fileWriteChain = next.catch(() => {
+    // Keep the chain alive after a failure
+  });
+  return next;
 }
 
 /**
@@ -81,6 +104,49 @@ function getLogFilePathWithTimestamp(): string {
 }
 
 /**
+ * Normalize a log base path by removing repeated numeric suffixes
+ * Example: proxy-2026-04-13-192436_1_1 -> proxy-2026-04-13-192436
+ */
+function normalizeRotationBase(logFilePath: string): string {
+  const withoutExtension = logFilePath.replace(/\.log$/i, "");
+  return withoutExtension.replace(/(?:_\d+)+$/, "");
+}
+
+/**
+ * Redact sensitive fields recursively in structured payloads
+ */
+function redactSensitiveData(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSensitiveData(item, seen));
+  }
+
+  if (value && typeof value === "object") {
+    if (seen.has(value as object)) {
+      return "[Circular]";
+    }
+
+    seen.add(value as object);
+    const record = value as Record<string, unknown>;
+    const output: Record<string, unknown> = {};
+
+    for (const [key, child] of Object.entries(record)) {
+      const normalizedKey = key.toLowerCase();
+      const shouldPreserveTokenMetric = TOKEN_METRIC_KEYS.has(normalizedKey);
+
+      if (!shouldPreserveTokenMetric && SENSITIVE_KEY_PATTERN.test(normalizedKey)) {
+        output[key] = REDACTED_VALUE;
+      } else {
+        output[key] = redactSensitiveData(child, seen);
+      }
+    }
+
+    return output;
+  }
+
+  return value;
+}
+
+/**
  * Get the next available rotation suffix (_1, _2, _3)
  */
 async function getNextRotationSuffix(basePath: string): Promise<string> {
@@ -90,13 +156,17 @@ async function getNextRotationSuffix(basePath: string): Promise<string> {
       await fs.stat(rotatedPath);
       // File exists, try next suffix
       continue;
-    } catch {
-      // File doesn't exist, this is the next available suffix
-      return i === 1 ? `_1` : `_${i}`;
+    } catch (e) {
+      if (isNodeErrorLike(e) && e.code === "ENOENT") {
+        // File doesn't exist, this suffix is available
+        return `_${i}`;
+      }
+      throw e;
     }
   }
-  // All suffixes up to MAX_ROTATION_SUFFIX are taken, return the last one
-  return `_${MAX_ROTATION_SUFFIX}`;
+  // All suffixes up to MAX_ROTATION_SUFFIX are taken, return empty string
+  // The caller should handle this case
+  return "";
 }
 
 /**
@@ -110,26 +180,39 @@ async function rotateBySize(): Promise<string | null> {
   try {
     const stats = await fs.stat(currentLogFile);
     if (stats.size <= MAX_LOG_SIZE) {
-      return currentLogFile; // No rotation needed
+      return null; // No rotation needed
     }
   } catch {
-    return currentLogFile; // File doesn't exist, no rotation needed
+    return null; // File doesn't exist, no rotation needed
   }
   
   // File exceeds MAX_LOG_SIZE, perform rotation with suffix naming
   // Get the base path without .log extension
-  const baseName = currentLogFile.replace(/\.log$/, "");
+  const baseName = normalizeRotationBase(currentLogFile);
+  const activeLogFile = `${baseName}.log`;
+  currentLogFile = activeLogFile;
   const suffix = await getNextRotationSuffix(baseName);
+  
+  // If no suffix available, don't rotate
+  if (!suffix) {
+    console.warn(`Logger: All rotation slots taken for ${currentLogFile}`);
+    return null;
+  }
+  
   const rotatedPath = `${baseName}${suffix}.log`;
   
   // Rename the current log file to the rotated path
   try {
-    await fs.rename(currentLogFile, rotatedPath);
-    // Return the new rotated path so caller can use it
-    return rotatedPath;
+    await fs.rename(activeLogFile, rotatedPath);
+    // Keep writing to the active (unsuffixed) log file
+    return activeLogFile;
   } catch (e) {
+    if (isNodeErrorLike(e) && e.code === "ENOENT") {
+      // Another write may have rotated/recreated in between; recover silently
+      return activeLogFile;
+    }
     console.error("Logger rotation error:", e);
-    return currentLogFile;
+    return null;
   }
 }
 
@@ -147,6 +230,7 @@ async function rotateIfNeeded(): Promise<void> {
   
   // Check size-based rotation with suffix naming
   if (currentLogFile) {
+    currentLogFile = `${normalizeRotationBase(currentLogFile)}.log`;
     const newLogFile = await rotateBySize();
     if (newLogFile && newLogFile !== currentLogFile) {
       currentLogFile = newLogFile;
@@ -179,31 +263,36 @@ function formatLogEntry(entry: LogEntry): string {
  * Write a single log entry to file
  */
 async function writeLogEntry(entry: LogEntry): Promise<void> {
-  await rotateIfNeeded();
-  
-  const formatted = formatLogEntry(entry);
-  const line = formatted + "\n";
-  
-  try {
-    await fs.appendFile(currentLogFile!, line);
-  } catch (e) {
-    console.error("Logger write error:", e);
-  }
+  await enqueueFileWrite(async () => {
+    await rotateIfNeeded();
+
+    const formatted = formatLogEntry(entry);
+    const line = formatted + "\n";
+
+    try {
+      await fs.appendFile(currentLogFile!, line);
+    } catch (e) {
+      console.error("Logger write error:", e);
+    }
+  });
 }
 
 /**
  * Write a JSON log entry to file (one JSON object per line)
  */
 async function writeJsonLogEntry(entry: unknown): Promise<void> {
-  await rotateIfNeeded();
-  
-  const jsonLine = JSON.stringify(entry) + "\n";
-  
-  try {
-    await fs.appendFile(currentLogFile!, jsonLine);
-  } catch (e) {
-    console.error("Logger write error:", e);
-  }
+  await enqueueFileWrite(async () => {
+    await rotateIfNeeded();
+
+    const sanitized = redactSensitiveData(entry);
+    const jsonLine = JSON.stringify(sanitized) + "\n";
+
+    try {
+      await fs.appendFile(currentLogFile!, jsonLine);
+    } catch (e) {
+      console.error("Logger write error:", e);
+    }
+  });
 }
 
 /**
@@ -248,7 +337,8 @@ export function formatPayload(payload: unknown, truncate = false): string {
   if (payload === null || payload === undefined) return '';
   
   try {
-    const str = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+    const sanitized = redactSensitiveData(payload);
+    const str = typeof sanitized === 'string' ? sanitized : JSON.stringify(sanitized, null, 2);
     if (truncate && str.length > 200) {
       return str.substring(0, 200) + '...';
     }
@@ -551,6 +641,7 @@ export async function initLogger(): Promise<void> {
  */
 export async function flushLogs(): Promise<void> {
   await flushQueue();
+  await fileWriteChain;
 }
 
 // Auto-initialize on import

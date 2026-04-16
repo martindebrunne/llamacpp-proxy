@@ -24,6 +24,10 @@ const requestState = new WeakMap<Request, LoggingState>();
 export function loggingMiddleware(req: Request, res: Response, next: NextFunction): void {
   const startTime = Date.now();
   const correlationId = generateCorrelationId();
+
+  // Expose correlation ID to downstream services (proxy/streaming)
+  // that emit request-end and stream logs.
+  (req as any).correlationId = correlationId;
   
   // Extract model and thinking mode from request
   const incomingModel = (req.body as { model?: string })?.model;
@@ -74,18 +78,22 @@ export function loggingMiddleware(req: Request, res: Response, next: NextFunctio
     // Get stored state
     const state = requestState.get(req);
     if (state) {
+      const requestEndLoggedByService = (req as any).requestEndLoggedByService === true;
+
+      if (!requestEndLoggedByService) {
       // Log request end to console
-      consoleRequestLogEnd({
-        method: req.method,
-        path: req.originalUrl || req.url,
-        status: res.statusCode,
-        duration,
-        size: responseBodySize,
-        upstreamModel: undefined, // Will be set by proxy services
-        thinkingMode: state.thinkingMode,
-        stream: false, // Will be set by proxy/streaming services
-        correlationId: state.correlationId,
-      });
+        consoleRequestLogEnd({
+          method: req.method,
+          path: req.originalUrl || req.url,
+          status: res.statusCode,
+          duration,
+          size: responseBodySize,
+          upstreamModel: undefined, // Will be set by proxy services
+          thinkingMode: state.thinkingMode,
+          stream: false, // Will be set by proxy/streaming services
+          correlationId: state.correlationId,
+        });
+      }
       
       // Note: File logging for request end is handled by proxy/streaming services
       // to include upstream model and full response payload

@@ -8,6 +8,11 @@ OpenAI-compatible proxy server for llama.cpp with **dynamic model detection** an
 ### POST /chat/completions, /v1/chat/completions
 Create chat completion.
 
+For streaming requests, the proxy preserves OpenAI-compatible SSE semantics expected by agents:
+- `tool_calls` chunks are forwarded
+- `finish_reason` is preserved (including values like `tool_calls` and `stop`)
+- terminal `data: [DONE]` marker is emitted
+
 ### GET /models, /v1/models
 List available models with Think/No-Think variants.
 
@@ -37,16 +42,16 @@ Models without `*-Think` or `*-No-Think` suffix are passed through without modif
 
 ## ⚠️ Important: llama.cpp Compatibility
 
-**Pour que le mode thinking fonctionne, le modèle servi par llama.cpp DOIT être compatible avec l'option `enable_thinking` dans `chat_template_kwargs`.**
+**Thinking mode only works if the upstream llama.cpp model supports `chat_template_kwargs.enable_thinking`.**
 
-Si le modèle upstream ne supporte pas cette option, la requête échouera avec une erreur 400.
+If the upstream model does not support this option, the request can fail with a 400 error.
 
 ### Compatible Models
-- Tout modèle llama.cpp configuré avec `--chat-template` supportant `enable_thinking`
+- Any llama.cpp model configured with a `--chat-template` that supports `enable_thinking`
 
 ### Incompatible Models
-- Modèles llama.cpp standard sans support thinking
-- Modèles configurés avec des chat templates incompatibles
+- Standard llama.cpp models without thinking support
+- Models configured with incompatible chat templates
 
 ---
 
@@ -91,4 +96,4 @@ Requests are logged to:
 - Console (compressed format)
 - File (full payloads, no truncation)
 
-Log files are located in `logs/` directory.
+Log files are located in `logs/` directory with `proxy-*.log` naming (startup timestamp + rotation suffixes).

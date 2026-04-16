@@ -16,6 +16,7 @@ Client → Proxy (4000) → llama-server (8080)
 - **Auth Passthrough**: Authorization headers forwarded to upstream
 - **Conditional Sanitization**: Response filtering only in Think mode
 - **Usage Metadata Preservation**: Token consumption data preserved in separate chunk
+- **Agent Tool-Calling Compatibility**: `tool_calls`, `finish_reason`, and `[DONE]` preserved in streaming output
 
 ## Model Naming
 
@@ -43,7 +44,7 @@ Client → Proxy (4000) → llama-server (8080)
 2. Proxy parses JSON body (for intercepted routes)
 3. `mapRequest()` returns body unchanged (including model name)
 4. Request forwarded to upstream unchanged
-5. Response passed through unchanged
+5. Response passed through unchanged (raw SSE passthrough)
 6. Usage metadata preserved
 7. Original response streamed to client
 
@@ -53,7 +54,12 @@ Responses are forwarded from upstream, with conditional processing:
 | Mode | Request Transformed | Response Sanitized | Usage in Separate Chunk |
 |------|--------------------|--------------------|------------------------|
 | Think | ✅ Yes | ✅ Yes (reasoning filtered) | ✅ Yes |
-| No-Think | ❌ No (passthrough) | ❌ No (passthrough) | ✅ Yes |
+| No-Think | ❌ No (passthrough) | ❌ No (passthrough) | ↔️ Upstream passthrough |
+
+In Think mode streaming, the proxy preserves OpenAI-compatible chunk semantics used by agent runtimes:
+- forwards `tool_calls`
+- preserves `finish_reason` (for example `tool_calls`, `stop`)
+- emits terminal `data: [DONE]`
 
 ## Usage Metadata
 The `usage` field contains token consumption data:

@@ -16,6 +16,7 @@ import { findAvailablePort } from "./utils/portChecker.js";
 import { MAX_PORT_FALLBACK_ATTEMPTS } from "./config/index.js";
 
 const app = express();
+app.disable("x-powered-by");
 
 // Graceful shutdown handlers
 process.on("SIGTERM", async () => {
@@ -67,8 +68,8 @@ app.use(
     changeOrigin: true,
     ws: true,
     logLevel: "silent",
-    proxyTimeout: 300000,
-    timeout: 300000,
+    proxyTimeout: config.PROXY_TIMEOUT_MS,
+    timeout: config.PROXY_TIMEOUT_MS,
   })
 );
 
@@ -97,7 +98,12 @@ async function startServer() {
     consoleInfo("Proxy started", `listening on http://${config.PROXY_HOST}:${actualPort}`);
     consoleInfo("Passthrough target", config.LLAMA_ORIGIN);
     consoleInfo("Dynamic model detection enabled - real model extracted from incoming requests");
+    consoleInfo("Timeouts", `proxy=${config.PROXY_TIMEOUT_MS}ms upstream_fetch=${config.UPSTREAM_FETCH_TIMEOUT_MS}ms`);
   });
+
+  server.headersTimeout = config.PROXY_TIMEOUT_MS + 60_000;
+  server.requestTimeout = config.PROXY_TIMEOUT_MS;
+  server.keepAliveTimeout = Math.min(75_000, config.PROXY_TIMEOUT_MS);
   
   // Handle server errors
   server.on("error", (err: NodeJS.ErrnoException) => {

@@ -12,6 +12,8 @@ export interface AppConfig {
   UPSTREAM_PORT: number;
   PROXY_HOST: string;
   LLAMA_ORIGIN: string;
+  PROXY_TIMEOUT_MS: number;
+  UPSTREAM_FETCH_TIMEOUT_MS: number;
 }
 
 export interface LogPayload {

@@ -19,9 +19,8 @@ sequenceDiagram
         Proxy->>Proxy: model = "MyModel" (stripped suffix)
         Proxy->>Proxy: enable_thinking = true
     else model includes "No-Think"
-        Proxy->>Proxy: extractRealModel()
-        Proxy->>Proxy: model = "MyModel" (stripped suffix)
-        Proxy->>Proxy: return body unchanged
+        Proxy->>Proxy: isNoThinkMode() returns true
+        Proxy->>Proxy: return body unchanged (passthrough, model preserved)
     else no Think/No-Think
         Proxy->>Proxy: return body unchanged
     end
@@ -73,7 +72,7 @@ sequenceDiagram
 
 ## Dynamic Model Detection
 
-The proxy extracts the real model name dynamically:
+The proxy extracts the real model name dynamically from `*-Think` requests:
 
 ```
 Incoming: "MyModel-Think"
@@ -86,4 +85,6 @@ Upstream: "MyModel"
 This works for any model name:
 - `Qwen3.5-35B-A3B-T-Think` → `Qwen3.5-35B-A3B-T`
 - `Llama3-70B-Think` → `Llama3-70B`
-- `MyCustomModel-No-Think` → `MyCustomModel`
+
+For `*-No-Think` requests, the model name is passed through unchanged:
+- `MyModel-No-Think` → `MyModel-No-Think` (no transformation)

@@ -9,7 +9,8 @@ OpenAI-compatible proxy server for [llama.cpp](https://github.com/ggerganov/llam
 - 🔄 **Dynamic Model Detection** - Rewrites `*-Think` model names to upstream model IDs
 - 🧠 **Thinking Mode Support** - Enable/disable thinking mode via `*-Think` and `*-No-Think` suffixes
 - 📡 **OpenAI-Compatible API** - Works with any OpenAI-compatible client
-- 🚀 **Streaming Support** - Real-time SSE streaming with response sanitization
+- 🚀 **Streaming Support** - Real-time SSE streaming with strict passthrough in No-Think mode
+- 🛠️ **Agent/Tool-Calling Safe** - Preserves `tool_calls`, `finish_reason`, and `[DONE]` semantics
 - 📝 **Request Logging** - Comprehensive logging with payload capture
 - 🛡️ **Graceful Shutdown** - Proper cleanup on SIGTERM/SIGINT
 
@@ -49,6 +50,8 @@ curl -s http://localhost:4000/v1/chat/completions \
     "messages": [{"role": "user", "content": "Hello"}]
   }'
 ```
+
+For SSE requests in No-Think mode, chunks are forwarded unchanged from upstream.
 
 ### List Available Models
 
@@ -112,7 +115,7 @@ npm start -- 3000:8080
 Requests are logged to:
 
 - **Console** - Compressed format with timing and model info
-- **File** - Full payloads in `logs/proxy-YYYY-MM-DD.log`
+- **File** - Full payloads in `logs/proxy-*.log` (startup timestamp + rotation suffixes)
 
 Log rotation:
 - Time-based: 24 hours

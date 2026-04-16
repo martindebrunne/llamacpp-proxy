@@ -21,7 +21,7 @@ export declare function serializeSseEvent(json: unknown): string;
 /**
  * Create an SSE chunk from template
  */
-export declare function createSseChunkFromTemplate(baseChunk: Partial<ChatCompletionChunk> | undefined, choice: Partial<Choice> | undefined, delta: Partial<Delta> | undefined, model: string | undefined): ChatCompletionChunk;
+export declare function createSseChunkFromTemplate(baseChunk: Partial<ChatCompletionChunk> | undefined, choice: Partial<Choice> | undefined, delta: Partial<Delta> | undefined, model: string | undefined, finishReason?: string | null): ChatCompletionChunk;
 /**
  * Split SSE buffer into complete blocks
  */
