@@ -6,10 +6,11 @@ OpenAI-compatible proxy server for [llama.cpp](https://github.com/ggerganov/llam
 
 ## Features
 
-- 🔄 **Dynamic Model Detection** - Automatically extracts the real model name from incoming requests
+- 🔄 **Dynamic Model Detection** - Rewrites `*-Think` model names to upstream model IDs
 - 🧠 **Thinking Mode Support** - Enable/disable thinking mode via `*-Think` and `*-No-Think` suffixes
 - 📡 **OpenAI-Compatible API** - Works with any OpenAI-compatible client
-- 🚀 **Streaming Support** - Real-time SSE streaming with response sanitization
+- 🚀 **Streaming Support** - Real-time SSE streaming with strict passthrough in No-Think mode
+- 🛠️ **Agent/Tool-Calling Safe** - Preserves `tool_calls`, `finish_reason`, and `[DONE]` semantics
 - 📝 **Request Logging** - Comprehensive logging with payload capture
 - 🛡️ **Graceful Shutdown** - Proper cleanup on SIGTERM/SIGINT
 
@@ -22,8 +23,8 @@ npm install
 # Start proxy (default: port 4000 → upstream 8080)
 npm start
 
-# Or with custom ports
-node proxy.js 4000:8080
+# Or with custom ports (PROXY_PORT:UPSTREAM_PORT)
+npm start -- 4000:8080
 ```
 
 ## Usage
@@ -50,6 +51,8 @@ curl -s http://localhost:4000/v1/chat/completions \
   }'
 ```
 
+For SSE requests in No-Think mode, chunks are forwarded unchanged from upstream.
+
 ### List Available Models
 
 ```bash
@@ -63,7 +66,7 @@ curl -s http://localhost:4000/v1/models | jq .
 | Client Model | Upstream Model | Behavior |
 |--------------|----------------|----------|
 | `MyModel-Think` | `MyModel` | Enables `enable_thinking: true` |
-| `MyModel-No-Think` | `MyModel` | Passthrough (no transformation) |
+| `MyModel-No-Think` | `MyModel-No-Think` | Passthrough (no transformation) |
 | `MyModel` | `MyModel` | Passthrough (no transformation) |
 
 ### Request Flow
@@ -98,8 +101,8 @@ Return to Client
 ### Command Line Arguments
 
 ```bash
-# Format: node proxy.js PROXY_PORT:UPSTREAM_PORT
-node proxy.js 3000:8080
+# Format: npm start -- PROXY_PORT:UPSTREAM_PORT
+npm start -- 3000:8080
 ```
 
 ## Requirements
@@ -112,11 +115,11 @@ node proxy.js 3000:8080
 Requests are logged to:
 
 - **Console** - Compressed format with timing and model info
-- **File** - Full payloads in `logs/proxy-YYYY-MM-DD.log`
+- **File** - Full payloads in `logs/proxy-*.log` (startup timestamp + rotation suffixes)
 
 Log rotation:
 - Time-based: 24 hours
-- Size-based: 10MB max per file
+- Size-based: 5MB max per file
 
 ## API Reference
 

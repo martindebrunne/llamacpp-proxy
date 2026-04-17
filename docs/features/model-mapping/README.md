@@ -1,7 +1,7 @@
 # Model Mapping Feature
 
 ## Purpose
-Transform logical model names (`*-Think`, `*-No-Think`) into upstream-compatible requests with `enable_thinking` flag. **Dynamic model detection** extracts the real model name from incoming requests.
+Transform logical model names for thinking mode control. `*-Think` requests are rewritten to upstream-compatible requests with `enable_thinking`; `*-No-Think` and unsuffixed requests are passed through unchanged.
 
 ## Scope
 - Intercept model names from client requests
@@ -12,8 +12,8 @@ Transform logical model names (`*-Think`, `*-No-Think`) into upstream-compatible
 - Real-time streaming with separate usage chunk
 
 ## Entry Points
-- `mapRequest()` function in `proxy.js`
-- `extractRealModel()` function in `proxy.js`
+- `mapRequest()` function in `src/services/modelMapper.ts`
+- `extractRealModel()` function in `src/services/modelMapper.ts`
 - Intercepted routes: `/chat/completions`, `/v1/chat/completions`, `/completions`, `/v1/completions`
 
 ## Behavior by Mode
@@ -97,11 +97,11 @@ The proxy automatically detects the real model name from any incoming request:
 |----------------|----------------|
 | `Qwen3.5-35B-A3B-T-Think` | `Qwen3.5-35B-A3B-T` |
 | `Llama3-70B-Think` | `Llama3-70B` |
-| `MyCustomModel-No-Think` | `MyCustomModel` |
+| `MyCustomModel-No-Think` | `MyCustomModel-No-Think` |
 
 This makes the proxy **compatible with any model** served by llama.cpp.
 
 ## Related Documentation
 - [API Overview](../../api/exposed/llama-proxy/overview.md)
-- [System Patterns](../../memory-bank/system-patterns.md)
-- [Tech Context](../../memory-bank/tech-context.md)
+- [System Patterns](../../../.memory-bank/system-patterns.md)
+- [Tech Context](../../../.memory-bank/tech-context.md)
