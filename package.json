@@ -1,6 +1,6 @@
 {
   "name": "llamacpp-proxy",
-  "version": "1.0.12",
+  "version": "1.1.0",
   "description": "OpenAI-compatible proxy server for llama.cpp with dynamic model detection and thinking mode support",
   "type": "module",
   "main": "dist/index.js",
